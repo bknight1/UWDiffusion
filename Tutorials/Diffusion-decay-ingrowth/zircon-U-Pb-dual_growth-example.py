@@ -403,11 +403,6 @@ internal_zircon_polygon = Polygon(inner_zircon[:,0:2], closed=True)
 with zircon_mesh.access(zircon_regions):
     zircon_regions.data[:,0] = internal_zircon_polygon.contains_points(zircon_regions.coords, radius=1e-8)
 
-#     cbar = plt.scatter(zircon_regions.coords[:,0], zircon_regions.coords[:,1], c=zircon_regions.data[:,0], s=1.)
-
-# plt.colorbar(cbar)
-
-# plt.plot(inner_points[:,0], inner_points[:,1], 'r-', alpha=0.1)
 
 # %% [markdown]
 # ------
@@ -417,30 +412,33 @@ with zircon_mesh.access(zircon_regions):
 
 # %%
 U238_Pb206 = DIF.DiffusionDecayIngrowthModel(
-        parent_name=r"{}^{238}\text{U}", daughter_name=r"{}^{206}\text{Pb}", half_life=half_life_U238*u.year, initial_parent=U238_amount, mesh=zircon_mesh
+        parent_name=r"{}^{238}\text{U}", daughter_name=r"{}^{206}\text{Pb}", half_life=half_life_U238*u.year, mesh=zircon_mesh
     )
 
 U235_Pb207 = DIF.DiffusionDecayIngrowthModel (
-        parent_name=r"{}^{235}\text{U}", daughter_name=r"{}^{207}\text{Pb}", half_life=half_life_U235*u.year, initial_parent=U235_amount, mesh=zircon_mesh
+        parent_name=r"{}^{235}\text{U}", daughter_name=r"{}^{207}\text{Pb}", half_life=half_life_U235*u.year, mesh=zircon_mesh
     )
 
 
-# %% [markdown]
-# #### The initial values in the outer region need to be reset to 0
+# %%
+with U238_Pb206.mesh.access(U238_Pb206.parent_mesh_var, U238_Pb206.daughter_mesh_var):
+    ### inside is the initial amount, outside is 0
+    U238_Pb206.parent_mesh_var.data[(zircon_regions.data[:,0] == 1)] = U238_amount
+    U238_Pb206.parent_mesh_var.data[(zircon_regions.data[:,0] == 0)] = 0.
+    #### the initial Pb206 is 0 everywhere
+    U238_Pb206.daughter_mesh_var.data[:, 0] = 0.0
+
+U238_Pb206.init_model()
 
 # %%
-with zircon_mesh.access(U238_Pb206.parent_mesh_var):
-    U238_Pb206.parent_mesh_var.data[(zircon_regions.data[:,0] == 0)] = 0
-    # DIF.utilities.plot_mesh_data(U238_Pb206.parent_mesh_var.coords, U238_Pb206.parent_mesh_var.data[:,0])
+with U235_Pb207.mesh.access(U235_Pb207.parent_mesh_var, U235_Pb207.daughter_mesh_var):
+    ### inside is the initial amount, outside is 0
+    U235_Pb207.parent_mesh_var.data[(zircon_regions.data[:,0] == 1)] = U235_amount
+     U235_Pb207.parent_mesh_var.data[(zircon_regions.data[:,0] == 0)] = 0.
+    #### the initial Pb207 is 0 everywhere
+    U235_Pb207.daughter_mesh_var.data[:, 0] = 0.0
 
-U238_Pb206.parent_diffusion.DuDt.initiate_history_fn()
-
-# %%
-with zircon_mesh.access(U235_Pb207.parent_mesh_var):
-    U235_Pb207.parent_mesh_var.data[(zircon_regions.data[:,0] == 0)] = 0
-    # DIF.utilities.plot_mesh_data(U235_Pb207.parent_mesh_var.coords, U235_Pb207.parent_mesh_var.data[:,0])
-
-U235_Pb207.parent_diffusion.DuDt.initiate_history_fn()
+U235_Pb207.init_model()
 
 # %% [markdown]
 # ------
@@ -600,10 +598,8 @@ if uw.mpi.rank == 0:
 # %%
 with zircon_mesh.access(U238_Pb206.parent_mesh_var):
     U238_Pb206.parent_mesh_var.data[(zircon_regions.data[:,0] == 0)] = U238_amount
-    # DIF.utilities.plot_mesh_data(U238_Pb206.parent_mesh_var.coords, U238_Pb206.parent_mesh_var.data[:,0])
 
-    # print(U238_Pb206.parent_mesh_var.data.min(), U238_Pb206.parent_mesh_var.data.max())
-
+### we have to update the history function after changing the parent concentration
 U238_Pb206.parent_diffusion.DuDt.update_history_fn()
 
 
@@ -612,9 +608,9 @@ U238_Pb206.parent_diffusion.DuDt.update_history_fn()
 # %%
 with zircon_mesh.access(U235_Pb207.parent_mesh_var):
     U235_Pb207.parent_mesh_var.data[(zircon_regions.data[:,0] == 0)] = U235_amount
-    # DIF.utilities.plot_mesh_data(U235_Pb207.parent_mesh_var.coords, U235_Pb207.parent_mesh_var.data[:,0])
-    # print(U235_Pb207.parent_mesh_var.data.min(), U235_Pb207.parent_mesh_var.data.max())
 
+
+### we have to update the history function after changing the parent concentration
 U235_Pb207.parent_diffusion.DuDt.update_history_fn()
 
 # %%

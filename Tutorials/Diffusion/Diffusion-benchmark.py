@@ -71,7 +71,7 @@ time_start = time.time()
 # to modify the cell cize to 0.01
 
 # %%
-U_degree    = uw.options.getInt("U_degree", default=1)
+U_degree    = uw.options.getInt("U_degree", default=2)
 continuous  = uw.options.getBool("continuous", default=True)
 
 csize       = uw.options.getReal("csize", default=0.02)
@@ -296,8 +296,24 @@ init_dist = sp.Piecewise( (0, mesh.X[0] < x0_c), (1, (mesh.X[0] >= x0_c) & (mesh
 # -----
 
 # %%
-Pb_diffusion = DIF.DiffusionModel('Pb', init_dist, U_degree, 1, mesh)
+Pb_diffusion = DIF.DiffusionModel('Pb', mesh)
 
+
+# %% [markdown]
+# #### We need to set the initial value across the domain
+# -----
+# We do this by accessing the mesh variable for the model
+
+# %%
+with Pb_diffusion.mesh.access(Pb_diffusion.mesh_var):
+    Pb_diffusion.mesh_var.data[:,0] = uw.function.evaluate(init_dist, Pb_diffusion.mesh_var.coords)
+
+# %% [markdown]
+# ##### This initialises the model, which needs to happen after setting up the initial unknown distribution and before solving the model
+# -----
+
+# %%
+Pb_diffusion.init_model()
 
 # %% [markdown]
 # ------
@@ -330,7 +346,6 @@ for _solver in [Pb_diffusion]:
 # -----
 
 # %%
-
 Pb_diffusion.run_simulation(duration=t_end*u.megayear, time_step_factor=CFL_fac)
 
 

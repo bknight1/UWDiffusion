@@ -10,53 +10,32 @@ from .solvers import SNES_Diffusion
 class DiffusionModel:
     def __init__(self, 
                  variable_name, 
-                 initial_abundance,
+                 mesh,
                  degree=2,
-                 order=1,
-                 mesh=None):
+                 order=1,):
         """
-        Initialize the decay simulation for a parent-daughter decay chain.
+        Initialize the diffusion model for a single variable.
 
         Parameters:
-        - parent_name: Name of the parent isotope (str)
-        - daughter_name: Name of the daughter isotope (str)
-        - half_life: Half-life of the parent isotope in years (float)
-        - initial_parent: Initial abundance of the parent isotope (float)
-        - initial_daughter: Initial abundance of the daughter isotope (float, default=0.0)
+        - variable_name: Name of the variable (str)
+        - mesh: underworld3 mesh object
         - degree: Degree of the finite element basis functions (int, default=2)
-        - mesh: Underworld3 mesh object (optional)
+        - order: Order of the diffusion solver (int, default=1)
         """
         self.variable_name = variable_name
         self.degree = degree
-        self.initial_abundance = initial_abundance
 
         self.order = order
 
         self.current_time = 0.0
         self.step = 0
 
-        # Create mesh
-        if mesh is None:
-            self.mesh = uw.meshing.UnstructuredSimplexBox(
-                minCoords=(0, 0), maxCoords=(1, 1), cellSize=0.05, qdegree=self.degree
-            )
-        else:
-            self.mesh = mesh
+        self.mesh = mesh
 
         # Initialize mesh variables
         self.mesh_var = uw.discretisation.MeshVariable(
             f"{self.variable_name}", self.mesh, 1, degree=self.degree, continuous=True
         )
-
-        # Set initial values
-        with self.mesh.access(self.mesh_var):
-            if isinstance(self.initial_abundance, sp.Function):
-                self.mesh_var.data[:, 0] = uw.function.evaluate(self.initial_abundance, self.mesh_var.coords)
-            else:
-                self.mesh_var.data[:, 0] = self.initial_abundance
-
-        # Diffusion solvers
-        self.diffusion_solver = self._setup_diffusion_solver(self.mesh_var)
 
         # Hooks for pre-solve and post-solve
         self.pre_solve_hooks = []  # List of functions to call before each solve
@@ -72,6 +51,13 @@ class DiffusionModel:
         solver.constitutive_model = uw.constitutive_models.DiffusionModel
 
         return solver
+
+    def init_model(self):
+        """
+        Initialize the diffusion solver for the variable.
+        """
+        self.diffusion_solver = self._setup_diffusion_solver(self.mesh_var)
+
     
     @property
     def diffusivity(self):
@@ -208,41 +194,31 @@ class DiffusionModel:
 class DiffusionDecayIngrowthModel:
     def __init__(self, 
                  parent_name, 
-                 daughter_name, 
-                 half_life, 
-                 initial_parent,
-                 initial_daughter=0.0,
+                 daughter_name,
+                 mesh, 
+                 half_life,
                  degree=2,
-                 order=1,
-                 mesh=None):
+                 order=1):
         """
         Initialize the decay simulation for a parent-daughter decay chain.
 
         Parameters:
         - parent_name: Name of the parent isotope (str)
         - daughter_name: Name of the daughter isotope (str)
+        - mesh: underworld3 mesh object
         - half_life: Half-life of the parent isotope in years (float)
         - initial_parent: Initial abundance of the parent isotope (float)
         - initial_daughter: Initial abundance of the daughter isotope (float, default=0.0)
         - degree: Degree of the finite element basis functions (int, default=2)
-        - mesh: Underworld3 mesh object (optional)
         """
         self.parent_name = parent_name
         self.daughter_name = daughter_name
         self.half_life = half_life
         self.lambda_decay = np.log(2) / half_life  # Decay constant
-        self.initial_parent = initial_parent
-        self.initial_daughter = initial_daughter
         self.degree = degree
         self.order = order
 
-        # Create mesh
-        if mesh is None:
-            self.mesh = uw.meshing.UnstructuredSimplexBox(
-                minCoords=(0, 0), maxCoords=(1, 1), cellSize=0.05, qdegree=self.degree
-            )
-        else:
-            self.mesh = mesh
+        self.mesh = mesh
 
         # Initialize mesh variables
         self.parent_mesh_var = uw.discretisation.MeshVariable(
@@ -251,21 +227,6 @@ class DiffusionDecayIngrowthModel:
         self.daughter_mesh_var = uw.discretisation.MeshVariable(
             f"{self.daughter_name}", self.mesh, 1, degree=self.degree, continuous=True
         )
-
-        # Set initial values
-        with self.mesh.access(self.parent_mesh_var, self.daughter_mesh_var):
-            self.parent_mesh_var.data[:, 0] = self.initial_parent
-            self.daughter_mesh_var.data[:, 0] = self.initial_daughter
-        
-
-        # Diffusion solvers
-        self.parent_diffusion = self._setup_diffusion_solver(self.parent_mesh_var)
-        self.daughter_diffusion = self._setup_diffusion_solver(self.daughter_mesh_var)
-
-        # self.parent_diffusion.S = sp.Matrix([- (uw.scaling.non_dimensionalise( self.lambda_decay ) * self.parent_mesh_var.sym[0])])
-        
-        # self.daughter_diffusion.S = sp.Matrix([(uw.scaling.non_dimensionalise( self.lambda_decay ) * self.parent_mesh_var.sym[0])])
-
 
         # Hooks for pre-solve and post-solve
         self.pre_solve_hooks = []  # List of functions to call before each solve
@@ -286,6 +247,19 @@ class DiffusionDecayIngrowthModel:
         solver.constitutive_model = uw.constitutive_models.DiffusionModel
 
         return solver
+    
+    def init_model(self):
+        """
+        Initialize the diffusion solvers for parent and daughter variables.
+        """
+        self.parent_diffusion = self._setup_diffusion_solver(self.parent_mesh_var)
+        self.daughter_diffusion = self._setup_diffusion_solver(self.daughter_mesh_var)
+
+        # # Set source terms for decay and ingrowth
+        # self.parent_diffusion.S = sp.Matrix([- (uw.scaling.non_dimensionalise( self.lambda_decay ) * self.parent_mesh_var.sym[0])])
+        # self.daughter_diffusion.S = sp.Matrix([(uw.scaling.non_dimensionalise( self.lambda_decay ) * self.parent_mesh_var.sym[0])])
+
+
     
     @property
     def parent_diffusivity(self):

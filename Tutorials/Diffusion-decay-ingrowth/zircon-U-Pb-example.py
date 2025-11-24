@@ -230,9 +230,6 @@ scaling_coefficients["[time]"] = Kt
 
 scaling_coefficients
 
-
-# ### Create analytical fn
-
 # %% [markdown]
 # #### Here we define the mesh geometry to create a zircon-shaped 2D mesh.
 # We provide the points of which the mesh is constructed
@@ -256,13 +253,27 @@ zircon_mesh = DIF.meshing.generate_2D_mesh_from_points(points_array, csize, U_de
 
 # %%
 U238_Pb206 = DIF.DiffusionDecayIngrowthModel (
-        parent_name=r"{}^{238}\text{U}", daughter_name=r"{}^{206}\text{Pb}", half_life=half_life_U238*u.year, initial_parent=U238_amount, mesh=zircon_mesh
+        parent_name=r"{}^{238}\text{U}", daughter_name=r"{}^{206}\text{Pb}", half_life=half_life_U238*u.year, mesh=zircon_mesh
     )
 
 U235_Pb207 = DIF.DiffusionDecayIngrowthModel (
-        parent_name=r"{}^{235}\text{U}", daughter_name=r"{}^{207}\text{Pb}", half_life=half_life_U235*u.year, initial_parent=U235_amount, mesh=zircon_mesh
+        parent_name=r"{}^{235}\text{U}", daughter_name=r"{}^{207}\text{Pb}", half_life=half_life_U235*u.year, mesh=zircon_mesh
     )
 
+
+# %%
+with U238_Pb206.mesh.access(U238_Pb206.parent_mesh_var, U238_Pb206.daughter_mesh_var):
+    U238_Pb206.parent_mesh_var.data[:, 0] = U238_amount
+    U238_Pb206.daughter_mesh_var.data[:, 0] = 0.0
+
+U238_Pb206.init_model()
+
+# %%
+with U235_Pb207.mesh.access(U235_Pb207.parent_mesh_var, U235_Pb207.daughter_mesh_var):
+    U235_Pb207.parent_mesh_var.data[:, 0] = U235_amount
+    U235_Pb207.daughter_mesh_var.data[:, 0] = 0.0
+
+U235_Pb207.init_model()
 
 # %% [markdown]
 # ------
@@ -569,5 +580,7 @@ if uw.mpi.rank == 0:
         f.write(','.join(summary.keys()) + '\n')
         f.write(','.join(str(v) for v in summary.values()) + '\n')
 
+
+# %%
 
 # %%

@@ -1,4 +1,4 @@
-from .Models import DiffusionModel, DiffusionDecayIngrowthModel
+from .Models import *
 from .meshing import *
 from .utilities import *
 

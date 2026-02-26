@@ -204,3 +204,18 @@ def plot_spot_sample(center, radius, ax=None, figsize=(8, 6), colour='k', linest
 
     if ax is None:
         return fig, ax
+
+
+def _adams_moulton_flux(flux, flux_history, order=None):
+    # Adams-Moulton coefficients for up to third order
+    if order is None:
+        order = self.order
+    with sp.core.evaluate(False):
+        if order == 1:
+            return (flux + flux_history[0]) / 2
+        elif order == 2:
+            return (5*flux + 8*flux_history[0] - flux_history[1]) / 12
+        elif order == 3:
+            return (9*flux + 19*flux_history[0] - 5*flux_history[1] + flux_history[2]) / 24
+        else:
+            raise NotImplementedError("Order > 3 not implemented for Adams-Moulton flux")

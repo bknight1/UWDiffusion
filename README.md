@@ -24,13 +24,17 @@ The library can be used to model and solve diffusion problems. Tutorials are pro
 ## Licence
 All UWDiffusion source code is released under the LGPL-3 open source licence. This covers all files in UWDiffusion constituting the UWDiffusion Python module. Notebooks, stand-alone documentation and Python scripts which show how the code is used and run are licensed under the Creative Commons Attribution 4.0 International Licence. For more details, see the [LICENCE.md](LICENCE.md) file.
 
+## Testing on binder
+Feel free to run the examples on binder!
+[![Launch in Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/bknight1/uw3-binder-launcher/main?urlpath=git-pull%3Frepo%3Dhttps%25253A%25252F%25252Fgithub.com%25252Fbknight1%25252FUWDiffusion%26branch%3Dmain%26urlpath%3Dlab%25252Ftree%25252FUWDiffusion)
+
 ## References
 
 ### underworld3
-Moresi, L., Mansour, J., Giordani, J., Knepley, M., Knight, B., Graciosa, J.C., Gollapalli, T., Lu, N., Beucher, R., 2025. Underworld3: Mathematically Self-Describing Modelling in Python for Desktop, HPC and Cloud. JOSS 10, 7831. https://doi.org/10.21105/joss.07831
+- Moresi, L., Mansour, J., Giordani, J., Knepley, M., Knight, B., Graciosa, J.C., Gollapalli, T., Lu, N., Beucher, R., 2025. Underworld3: Mathematically Self-Describing Modelling in Python for Desktop, HPC and Cloud. JOSS 10, 7831. https://doi.org/10.21105/joss.07831
 
-### Diffusion & Diffusion-decay-ingrowth
-Knight, B.S., Clark, C., 2025. Modelling diffusion, decay and ingrowth of U–Pb isotopes in zircon. EGUsphere 1–24. https://doi.org/10.5194/egusphere-2025-2278
-Clark, C., Brown, M., Knight, B., Johnson, T.E., Mitchell, R.J., Gupta, S., 2024. Ultraslow cooling of an ultrahot orogen. Geology. https://doi.org/10.1130/G52442.1
+### UW Diffusion
+- Knight, B.S., Clark, C., 2025. Modelling diffusion, decay and ingrowth of U–Pb isotopes in zircon. EGUsphere 1–24. https://doi.org/10.5194/egusphere-2025-2278
+- Clark, C., Brown, M., Knight, B., Johnson, T.E., Mitchell, R.J., Gupta, S., 2024. Ultraslow cooling of an ultrahot orogen. Geology. https://doi.org/10.1130/G52442.1
 
 

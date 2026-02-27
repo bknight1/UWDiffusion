@@ -11,6 +11,34 @@ from underworld3.systems import Poisson
 from .utilities import _adams_moulton_flux
 
 class DiffusionModel:
+        """Single-component diffusion model for one scalar field on a UW mesh.
+
+        Use this class when you want to solve a standard diffusion problem for a
+        single quantity (for example, one isotope concentration) with optional
+        higher-order time integration.
+
+        What this model handles for you:
+        - Creates and stores one Underworld mesh variable for the component.
+        - Solves the implicit diffusion equation each timestep.
+        - Supports BDF time derivatives with Adams-Moulton flux history terms
+            when ``order > 1``.
+        - Provides pre/post solve hooks for custom runtime logic.
+
+        Recommended workflow for new users:
+        1. Configure non-dimensional scaling in Underworld before setting
+             diffusivity or time values.
+        2. Construct ``DiffusionModel(variable_name, mesh, ...)``.
+        3. Set initial conditions on ``mesh_var`` and assign ``diffusivity``.
+        4. Add boundary conditions with ``add_dirichlet_bc`` and/or
+             ``add_neumann_bc``.
+        5. Optionally register hooks, then call ``run_simulation(...)``.
+
+        Notes:
+        - ``diffusivity`` accepts dimensional Pint values and is stored internally
+            in non-dimensional form.
+        - ``run_simulation`` chooses timesteps from mesh size and diffusivity,
+            then clamps by ``min_dt`` / ``max_dt`` if provided.
+        """
     def __init__(self, 
                  variable_name, 
                  mesh,
@@ -90,7 +118,7 @@ class DiffusionModel:
         """
         Initialize the diffusion solver for the variable.
         """
-        self.update_history_terms()
+        self.update_history_terms(dt=0.0)
         self._is_initialized = True
 
     def update_kappa(self):
@@ -104,13 +132,14 @@ class DiffusionModel:
         self.kappa_star[0].sym = self._diffusivity_expr.sym
         
 
-    def update_history_terms(self):
+    def update_history_terms(self, dt=0.0):
         if self.order == 0:
-            self.DuDt.update_post_solve()
+            self.DuDt.update_post_solve(dt)
             return
+        
         self.update_kappa()
 
-        self.DuDt.update_post_solve()
+        self.DuDt.update_post_solve(dt)
 
         history_len = min(self.order, len(self.DuDt.psi_star), len(self.flux_history), len(self.kappa_star))
 
@@ -259,7 +288,7 @@ class DiffusionModel:
             self.diffusion_solver.solve()
 
             ### update hisotry terms
-            self.update_history_terms()
+            self.update_history_terms(time_step)
 
             # Post-solve hook
             self.run_post_solve_hooks()
@@ -273,6 +302,31 @@ class DiffusionModel:
 
 
 class DiffusionDecayIngrowthModel:
+        """Coupled parent-daughter diffusion model with radioactive decay/ingrowth.
+
+        Use this class when both species diffuse and are linked by radioactive
+        decay, where parent loss is daughter gain during each timestep.
+
+        What this model solves:
+        - Parent diffusion + decay sink term.
+        - Daughter diffusion + ingrowth source term.
+        - Consistent time integration for both fields using the same timestep,
+            with optional higher-order BDF + Adams-Moulton history treatment.
+
+        Recommended workflow for new users:
+        1. Configure Underworld non-dimensional scaling first (length/time).
+        2. Construct ``DiffusionDecayIngrowthModel(...)`` with ``half_life``.
+        3. Set initial parent/daughter fields on
+             ``parent_mesh_var`` / ``daughter_mesh_var``.
+        4. Set ``parent_diffusivity`` and ``daughter_diffusivity``.
+        5. Apply boundary conditions (parent, daughter, or both).
+        6. Run ``run_simulation(...)`` with conservative timestep controls.
+
+        Stability guidance:
+        - This coupled problem is often timestep-sensitive.
+        - Prefer smaller ``max_dt`` and/or ``diffusion_time_step_factor`` for
+            short half-lives, sharp gradients, or strongly varying diffusivity.
+        """
     def __init__(self, 
                  parent_name, 
                  daughter_name,
@@ -282,6 +336,12 @@ class DiffusionDecayIngrowthModel:
                  order=1):
         """
         Initialize the decay simulation for a parent-daughter decay chain.
+
+                Notes:
+                - The coupled diffusion-decay-ingrowth solve can be very sensitive to
+                    timestep size. Use conservative min_dt / max_dt settings,
+                    particularly for short half-lives, sharp concentration gradients,
+                    or rapidly varying diffusivity.
 
         Parameters:
         - parent_name: Name of the parent isotope (str)
@@ -400,26 +460,26 @@ class DiffusionDecayIngrowthModel:
                 self.daughter_kappa_star[i].sym = self.daughter_kappa_star[i-1].sym
         self.daughter_kappa_star[0].sym = self._daughter_diffusivity_expr.sym
 
-    def update_parent_history_terms(self):
+    def update_parent_history_terms(self, dt=0.0):
         """Update parent history terms."""
         if self.order == 0:
-            self.parent_DuDt.update_post_solve()
+            self.parent_DuDt.update_post_solve(dt)
             return
         self.update_parent_kappa()
-        self.parent_DuDt.update_post_solve()
+        self.parent_DuDt.update_post_solve(dt)
 
         history_len = min(self.order, len(self.parent_DuDt.psi_star), len(self.parent_flux_history), len(self.parent_kappa_star))
 
         for i in range(history_len):
             self.parent_flux_history[i] = self.parent_DuDt.psi_star[i].jacobian() * self.parent_kappa_star[i]
 
-    def update_daughter_history_terms(self):
+    def update_daughter_history_terms(self, dt=0.0):
         """Update daughter history terms."""
         if self.order == 0:
-            self.daughter_DuDt.update_post_solve()
+            self.daughter_DuDt.update_post_solve(dt)
             return
         self.update_daughter_kappa()
-        self.daughter_DuDt.update_post_solve()
+        self.daughter_DuDt.update_post_solve(dt)
 
         history_len = min(self.order, len(self.daughter_DuDt.psi_star), len(self.daughter_flux_history), len(self.daughter_kappa_star))
 
@@ -440,8 +500,8 @@ class DiffusionDecayIngrowthModel:
         Initialize the diffusion solvers for parent and daughter variables.
         """
 
-        self.update_parent_history_terms()
-        self.update_daughter_history_terms()
+        self.update_parent_history_terms(dt=0.0)
+        self.update_daughter_history_terms(dt=0.0)
         self._is_initialized = True
 
 
@@ -569,6 +629,12 @@ class DiffusionDecayIngrowthModel:
         """
         Run the decay simulation for the specified duration.
 
+                Notes:
+                - The diffusion-decay-ingrowth coupling is highly timestep sensitive.
+                    If results are noisy, unstable, or timestep dependent, reduce
+                    max_dt and/or diffusion_time_step_factor, and set a physically
+                    meaningful min_dt.
+
         Parameters:
         - duration: Total simulation time with units (e.g., 1e5*u.second)
         - min_dt: Minimum time step (optional)
@@ -638,7 +704,7 @@ class DiffusionDecayIngrowthModel:
             parent_flux_term = _adams_moulton_flux(parent_flux, self.parent_flux_history, order=effective_order)
             self.parent_diffusion.constitutive_model.Parameters.flux = parent_flux_term
             self.parent_diffusion.solve()
-            self.update_parent_history_terms()
+            self.update_parent_history_terms(time_step)
 
             # Update daughter history terms and solve
             self.daughter_diffusion.f = -(sp.simplify(self.daughter_DuDt.bdf(order=bdf_order)) / time_step) + self.daughter_S
@@ -646,7 +712,7 @@ class DiffusionDecayIngrowthModel:
             daughter_flux_term = _adams_moulton_flux(daughter_flux, self.daughter_flux_history, order=effective_order)
             self.daughter_diffusion.constitutive_model.Parameters.flux = daughter_flux_term
             self.daughter_diffusion.solve()
-            self.update_daughter_history_terms()
+            self.update_daughter_history_terms(time_step)
 
             # Post-solve hook
             self.run_post_solve_hooks()
@@ -663,6 +729,33 @@ class DiffusionDecayIngrowthModel:
 
 
 class MulticomponentDiffusionModel:
+        """Coupled multicomponent diffusion using a symbolic diffusion matrix.
+
+        Use this model when component fluxes are composition-coupled (including
+        cross-diffusion terms), not just independent scalar diffusion.
+
+        Model structure:
+        - For ``n`` named components, the first ``n-1`` are solved explicitly.
+        - The last component is implicit and updated as
+            ``x_n = 1 - sum(x_1, ..., x_{n-1})``.
+        - A symbolic ``(n-1) x (n-1)`` diffusion matrix defines self/cross terms.
+            Symbol values are supplied with ``set_diffusion_values(...)``.
+
+        Recommended workflow for new users:
+        1. Define component names with the implicit component last.
+        2. Provide a symbolic diffusion matrix (SymPy) for coupled terms.
+        3. Set symbol values with ``set_diffusion_values`` (supports symbol keys
+             or symbol-name strings; dimensional Pint values are accepted).
+        4. Set initial conditions and boundary conditions for independent
+             components.
+        5. Run ``run_simulation(...)``.
+
+        Notes:
+        - Composition-dependent symbols like ``xi_i`` are substituted from current
+            (or history) fields before flux assembly.
+        - Higher-order BDF and Adams-Moulton corrections are applied consistently
+            across all independent components.
+        """
     def __init__(self,
                  component_names,
                  mesh,
@@ -939,17 +1032,17 @@ class MulticomponentDiffusionModel:
             # Update the first kappa from substituted coupled diffusivity terms
             self.kappa_star_list[comp_idx][0].sym = diffusion_matrix_current[comp_idx, comp_idx]
 
-    def update_history_terms(self):
+    def update_history_terms(self, dt=0.0):
         """Update history terms for independent components."""
         if self.order == 0:
             for comp_idx in range(self.n_independent):
-                self.DuDt_list[comp_idx].update_post_solve()
+                self.DuDt_list[comp_idx].update_post_solve(dt)
             return
         self.update_kappa()
 
         # First update all component histories to a consistent time level
         for comp_idx in range(self.n_independent):
-            self.DuDt_list[comp_idx].update_post_solve()
+            self.DuDt_list[comp_idx].update_post_solve(dt)
 
         history_len = min(
             self.order,
@@ -969,7 +1062,7 @@ class MulticomponentDiffusionModel:
         """
         Initialize the diffusion solvers.
         """
-        self.update_history_terms()
+        self.update_history_terms(dt=0.0)
         self._is_initialized = True
 
     @property
@@ -1199,7 +1292,7 @@ class MulticomponentDiffusionModel:
             self.run_post_solve_hooks()
 
             # Update history terms for all independent components
-            self.update_history_terms()
+            self.update_history_terms(time_step)
 
             # Update time and step
             self.current_time += time_step

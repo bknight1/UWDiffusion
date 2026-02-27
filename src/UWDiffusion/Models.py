@@ -11,11 +11,11 @@ from underworld3.systems import Poisson
 from .utilities import _adams_moulton_flux
 
 class DiffusionModel:
-        """Single-component diffusion model for one scalar field on a UW mesh.
+    """Single-component diffusion model for one scalar field on a UW mesh.
 
-        Use this class when you want to solve a standard diffusion problem for a
-        single quantity (for example, one isotope concentration) with optional
-        higher-order time integration.
+    Use this class when you want to solve a standard diffusion problem for a
+    single quantity (for example, one isotope concentration) with optional
+    higher-order time integration.
 
         What this model handles for you:
         - Creates and stores one Underworld mesh variable for the component.
@@ -24,14 +24,14 @@ class DiffusionModel:
             when ``order > 1``.
         - Provides pre/post solve hooks for custom runtime logic.
 
-        Recommended workflow for new users:
-        1. Configure non-dimensional scaling in Underworld before setting
-             diffusivity or time values.
-        2. Construct ``DiffusionModel(variable_name, mesh, ...)``.
-        3. Set initial conditions on ``mesh_var`` and assign ``diffusivity``.
-        4. Add boundary conditions with ``add_dirichlet_bc`` and/or
-             ``add_neumann_bc``.
-        5. Optionally register hooks, then call ``run_simulation(...)``.
+     Recommended workflow for new users:
+     1. Configure non-dimensional scaling in Underworld before setting
+         diffusivity or time values.
+     2. Construct ``DiffusionModel(variable_name, mesh, ...)``.
+     3. Set initial conditions on ``mesh_var`` and assign ``diffusivity``.
+     4. Add boundary conditions with ``add_dirichlet_bc`` and/or
+         ``add_neumann_bc``.
+     5. Optionally register hooks, then call ``run_simulation(...)``.
 
         Notes:
         - ``diffusivity`` accepts dimensional Pint values and is stored internally
@@ -302,31 +302,31 @@ class DiffusionModel:
 
 
 class DiffusionDecayIngrowthModel:
-        """Coupled parent-daughter diffusion model with radioactive decay/ingrowth.
+    """Coupled parent-daughter diffusion model with radioactive decay/ingrowth.
 
-        Use this class when both species diffuse and are linked by radioactive
-        decay, where parent loss is daughter gain during each timestep.
+    Use this class when both species diffuse and are linked by radioactive
+    decay, where parent loss is daughter gain during each timestep.
 
-        What this model solves:
-        - Parent diffusion + decay sink term.
-        - Daughter diffusion + ingrowth source term.
-        - Consistent time integration for both fields using the same timestep,
-            with optional higher-order BDF + Adams-Moulton history treatment.
+    What this model solves:
+    - Parent diffusion + decay sink term.
+    - Daughter diffusion + ingrowth source term.
+    - Consistent time integration for both fields using the same timestep,
+        with optional higher-order BDF + Adams-Moulton history treatment.
 
-        Recommended workflow for new users:
-        1. Configure Underworld non-dimensional scaling first (length/time).
-        2. Construct ``DiffusionDecayIngrowthModel(...)`` with ``half_life``.
-        3. Set initial parent/daughter fields on
-             ``parent_mesh_var`` / ``daughter_mesh_var``.
-        4. Set ``parent_diffusivity`` and ``daughter_diffusivity``.
-        5. Apply boundary conditions (parent, daughter, or both).
-        6. Run ``run_simulation(...)`` with conservative timestep controls.
+    Recommended workflow for new users:
+    1. Configure Underworld non-dimensional scaling first (length/time).
+    2. Construct ``DiffusionDecayIngrowthModel(...)`` with ``half_life``.
+    3. Set initial parent/daughter fields on
+            ``parent_mesh_var`` / ``daughter_mesh_var``.
+    4. Set ``parent_diffusivity`` and ``daughter_diffusivity``.
+    5. Apply boundary conditions (parent, daughter, or both).
+    6. Run ``run_simulation(...)`` with conservative timestep controls.
 
-        Stability guidance:
-        - This coupled problem is often timestep-sensitive.
-        - Prefer smaller ``max_dt`` and/or ``diffusion_time_step_factor`` for
-            short half-lives, sharp gradients, or strongly varying diffusivity.
-        """
+    Stability guidance:
+    - This coupled problem is often timestep-sensitive.
+    - Prefer smaller ``max_dt`` and/or ``diffusion_time_step_factor`` for
+        short half-lives, sharp gradients, or strongly varying diffusivity.
+    """
     def __init__(self, 
                  parent_name, 
                  daughter_name,
@@ -729,10 +729,10 @@ class DiffusionDecayIngrowthModel:
 
 
 class MulticomponentDiffusionModel:
-        """Coupled multicomponent diffusion using a symbolic diffusion matrix.
+    """Coupled multicomponent diffusion using a symbolic diffusion matrix.
 
-        Use this model when component fluxes are composition-coupled (including
-        cross-diffusion terms), not just independent scalar diffusion.
+    Use this model when component fluxes are composition-coupled (including
+    cross-diffusion terms), not just independent scalar diffusion.
 
         Model structure:
         - For ``n`` named components, the first ``n-1`` are solved explicitly.
@@ -741,14 +741,14 @@ class MulticomponentDiffusionModel:
         - A symbolic ``(n-1) x (n-1)`` diffusion matrix defines self/cross terms.
             Symbol values are supplied with ``set_diffusion_values(...)``.
 
-        Recommended workflow for new users:
-        1. Define component names with the implicit component last.
-        2. Provide a symbolic diffusion matrix (SymPy) for coupled terms.
-        3. Set symbol values with ``set_diffusion_values`` (supports symbol keys
-             or symbol-name strings; dimensional Pint values are accepted).
-        4. Set initial conditions and boundary conditions for independent
-             components.
-        5. Run ``run_simulation(...)``.
+     Recommended workflow for new users:
+     1. Define component names with the implicit component last.
+     2. Provide a symbolic diffusion matrix (SymPy) for coupled terms.
+     3. Set symbol values with ``set_diffusion_values`` (supports symbol keys
+         or symbol-name strings; dimensional Pint values are accepted).
+     4. Set initial conditions and boundary conditions for independent
+         components.
+     5. Run ``run_simulation(...)``.
 
         Notes:
         - Composition-dependent symbols like ``xi_i`` are substituted from current

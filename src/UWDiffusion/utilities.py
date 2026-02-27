@@ -206,16 +206,69 @@ def plot_spot_sample(center, radius, ax=None, figsize=(8, 6), colour='k', linest
         return fig, ax
 
 
-def _adams_moulton_flux(flux, flux_history, order=None):
-    # Adams-Moulton coefficients for up to third order
+def _adams_moulton_flux(flux, flux_history, order=None, dt_current=None, dt_history=None):
+    # Adams-Moulton coefficients for up to third order.
+    # For variable timesteps, order=2 uses variable-step coefficients.
+    # For order=3 with strongly variable timesteps, this falls back to variable-step order=2.
     if order is None:
-        order = self.order
+        order = 1
+
+    if dt_history is None:
+        dt_history = []
+
+    def _to_float(value):
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
     with sp.core.evaluate(False):
         if order == 1:
             return (flux + flux_history[0]) / 2
-        elif order == 2:
-            return (5*flux + 8*flux_history[0] - flux_history[1]) / 12
-        elif order == 3:
-            return (9*flux + 19*flux_history[0] - 5*flux_history[1] + flux_history[2]) / 24
-        else:
-            raise NotImplementedError("Order > 3 not implemented for Adams-Moulton flux")
+
+        if order == 2:
+            dt_n = _to_float(dt_current)
+            dt_nm1 = _to_float(dt_history[0]) if len(dt_history) > 0 else None
+
+            if dt_n is None or dt_nm1 is None or dt_nm1 <= 0:
+                return (5 * flux + 8 * flux_history[0] - flux_history[1]) / 12
+
+            r = dt_n / dt_nm1
+            if abs(r - 1.0) < 1.0e-12:
+                return (5 * flux + 8 * flux_history[0] - flux_history[1]) / 12
+
+            w0 = (2 * r + 3) / (6 * (1 + r))
+            w1 = (3 + r) / 6
+            w2 = -(r**2) / (6 * (1 + r))
+            return w0 * flux + w1 * flux_history[0] + w2 * flux_history[1]
+
+        if order == 3:
+            dt_n = _to_float(dt_current)
+            dt_nm1 = _to_float(dt_history[0]) if len(dt_history) > 0 else None
+            dt_nm2 = _to_float(dt_history[1]) if len(dt_history) > 1 else None
+
+            if (
+                dt_n is not None
+                and dt_nm1 is not None
+                and dt_nm2 is not None
+                and dt_nm1 > 0
+                and dt_nm2 > 0
+            ):
+                r1 = dt_n / dt_nm1
+                r2 = dt_nm1 / dt_nm2
+                if abs(r1 - 1.0) < 0.05 and abs(r2 - 1.0) < 0.05:
+                    return (9 * flux + 19 * flux_history[0] - 5 * flux_history[1] + flux_history[2]) / 24
+
+                return _adams_moulton_flux(
+                    flux,
+                    flux_history,
+                    order=2,
+                    dt_current=dt_current,
+                    dt_history=dt_history,
+                )
+
+            return (9 * flux + 19 * flux_history[0] - 5 * flux_history[1] + flux_history[2]) / 24
+
+        raise NotImplementedError("Order > 3 not implemented for Adams-Moulton flux")

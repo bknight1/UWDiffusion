@@ -281,7 +281,13 @@ class DiffusionModel:
             flux = self.DuDt._psi_meshVar.jacobian() * self._diffusivity_expr
 
             # Adams-Moulton flux term
-            flux_term = _adams_moulton_flux(flux, self.flux_history, order=effective_order)
+            flux_term = _adams_moulton_flux(
+                flux,
+                self.flux_history,
+                order=effective_order,
+                dt_current=time_step,
+                dt_history=getattr(self.DuDt, "_dt_history", []),
+            )
             self.diffusion_solver.constitutive_model.Parameters.flux = flux_term
 
             ### solve 
@@ -701,7 +707,13 @@ class DiffusionDecayIngrowthModel:
             # Update parent history terms and solve
             self.parent_diffusion.f = -(sp.simplify(self.parent_DuDt.bdf(order=bdf_order)) / time_step) + self.parent_S
             parent_flux = self.parent_DuDt._psi_meshVar.jacobian() * self._parent_diffusivity_expr
-            parent_flux_term = _adams_moulton_flux(parent_flux, self.parent_flux_history, order=effective_order)
+            parent_flux_term = _adams_moulton_flux(
+                parent_flux,
+                self.parent_flux_history,
+                order=effective_order,
+                dt_current=time_step,
+                dt_history=getattr(self.parent_DuDt, "_dt_history", []),
+            )
             self.parent_diffusion.constitutive_model.Parameters.flux = parent_flux_term
             self.parent_diffusion.solve()
             self.update_parent_history_terms(time_step)
@@ -709,7 +721,13 @@ class DiffusionDecayIngrowthModel:
             # Update daughter history terms and solve
             self.daughter_diffusion.f = -(sp.simplify(self.daughter_DuDt.bdf(order=bdf_order)) / time_step) + self.daughter_S
             daughter_flux = self.daughter_DuDt._psi_meshVar.jacobian() * self._daughter_diffusivity_expr
-            daughter_flux_term = _adams_moulton_flux(daughter_flux, self.daughter_flux_history, order=effective_order)
+            daughter_flux_term = _adams_moulton_flux(
+                daughter_flux,
+                self.daughter_flux_history,
+                order=effective_order,
+                dt_current=time_step,
+                dt_history=getattr(self.daughter_DuDt, "_dt_history", []),
+            )
             self.daughter_diffusion.constitutive_model.Parameters.flux = daughter_flux_term
             self.daughter_diffusion.solve()
             self.update_daughter_history_terms(time_step)
@@ -906,9 +924,15 @@ class MulticomponentDiffusionModel:
         symbols = self.diffusion_matrix.free_symbols
 
         if history_index is None:
-            independent_comp = [self.DuDt_list[i]._psi_meshVar for i in range(self.n_independent)]
+            independent_comp = [
+                self.DuDt_list[i]._psi_meshVar.sym[0]
+                for i in range(self.n_independent)
+            ]
         else:
-            independent_comp = [self.DuDt_list[i].psi_star[history_index] for i in range(self.n_independent)]
+            independent_comp = [
+                self.DuDt_list[i].psi_star[history_index].sym[0]
+                for i in range(self.n_independent)
+            ]
 
         for symbol in symbols:
             comp_idx = self._parse_composition_index(symbol)
@@ -1274,7 +1298,11 @@ class MulticomponentDiffusionModel:
                     for i in range(effective_order)
                 ]
                 flux_term = _adams_moulton_flux(
-                    flux, flux_history_comp, order=effective_order
+                    flux,
+                    flux_history_comp,
+                    order=effective_order,
+                    dt_current=time_step,
+                    dt_history=getattr(self.DuDt_list[comp_idx], "_dt_history", []),
                 )
                 self.solvers[comp_idx].constitutive_model.Parameters.flux = flux_term
 
@@ -1298,8 +1326,8 @@ class MulticomponentDiffusionModel:
             self.current_time += time_step
             self.step += 1
 
-        if uw.mpi.rank == 0:
-            print(
-                f"\nStep {self.step}, Time: {uw.scaling.dimensionalise(self.current_time, time_units).m:.2f} {unit_name}",
-                flush=True,
-            )
+        # if uw.mpi.rank == 0:
+        #     print(
+        #         f"\nStep {self.step}, Time: {uw.scaling.dimensionalise(self.current_time, time_units).m:.2f} {unit_name}",
+        #         flush=True,
+        #     )

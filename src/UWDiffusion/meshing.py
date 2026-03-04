@@ -3,7 +3,11 @@ import gmsh
 import underworld3 as uw
 import os
 
-def generate_2D_mesh_from_points(points, cell_size, qdegree=2, output_path="./.meshes", model_name="point_mesh"):
+def generate_2D_mesh_from_points(points, 
+                                 cell_size, 
+                                 qdegree=2, 
+                                 output_path="./.meshes", 
+                                 model_name="point_mesh"):
     """
     Generates a 2D mesh using Gmsh based on user-defined points.
 
@@ -95,3 +99,109 @@ def generate_2D_mesh_from_points(points, cell_size, qdegree=2, output_path="./.m
     )
 
     return mesh
+
+
+def generate_garnet_annulus_mesh(
+    radii_nd,
+    mesh_degree,
+    total_shell_count,
+    growth_shell_count,
+    output_path="./.meshes",
+    mesh_name="garnet_mesh",
+):
+    """Generate annulus mesh with embedded shell boundaries for garnet-growth models.
+
+    Parameters
+    ----------
+    radii_nd : array-like
+        Non-dimensional radial coordinates used to build concentric circular shells.
+    mesh_degree : int
+        Quadrature degree for the returned Underworld mesh.
+    output_path : str
+        Directory where the gmsh `.msh` file will be written.
+    total_shell_count : int
+        Total number of radial shell samples in the reference profile (e.g. `Rr.shape[0]`).
+    growth_shell_count : int
+        Number of shells used in growth evolution (e.g. `radial_growth.shape[0]`).
+    mesh_name : str, optional
+        Output mesh filename stem (default: ``garnet_mesh``).
+
+    Returns
+    -------
+    underworld3.discretisation.Mesh
+        Underworld mesh with boundaries ``Centre`` and ``shell_0..shell_n``.
+    """
+    boundary_labels = ["Centre"]
+    boundary_tags = [100]
+
+    if uw.mpi.rank == 0:
+        os.makedirs(output_path, exist_ok=True)
+        gmsh.initialize()
+        gmsh.option.setNumber("General.Verbosity", False)
+        gmsh.model.add("Annulus_garnet_mesh")
+
+        def generate_curve(radius, cellsize, p0, label):
+            p1 = gmsh.model.geo.add_point(radius, 0.0, 0.0, meshSize=cellsize)
+            p2 = gmsh.model.geo.add_point(-radius, 0.0, 0.0, meshSize=cellsize)
+            c0 = gmsh.model.geo.add_circle_arc(p1, p0, p2)
+            c1 = gmsh.model.geo.add_circle_arc(p2, p0, p1)
+            cl = gmsh.model.geo.add_curve_loop([c0, c1], tag=label)
+            return [c0, c1], cl
+
+        internal_curves = []
+        cls = []
+
+        cellsize = float(radii_nd[1] - radii_nd[0])
+        p0 = gmsh.model.geo.add_point(0.0, 0.0, 0.0, meshSize=cellsize)
+
+        tag = 101
+        final_loop = None
+        for radius in radii_nd[1:]:
+            internal_curve, cl = generate_curve(radius, cellsize, p0, tag)
+            cls.append(cl)
+            internal_curves.append(internal_curve)
+            final_loop = cl
+            tag += 1
+
+        if final_loop is None:
+            raise ValueError("At least two radial points are required to build annulus mesh.")
+
+        s = gmsh.model.geo.add_plane_surface([final_loop])
+        gmsh.model.geo.synchronize()
+
+        gmsh.model.mesh.embed(0, [p0], 2, s)
+        for curve in internal_curves:
+            gmsh.model.mesh.embed(1, curve, 2, s)
+        gmsh.model.geo.synchronize()
+
+        gmsh.model.addPhysicalGroup(0, [p0], tag=boundary_tags[0], name=boundary_labels[0])
+
+        shell = 0
+        start_shell = int(total_shell_count) - int(growth_shell_count) - 1
+        for curve in internal_curves[start_shell:]:
+            boundary_label = f"shell_{shell}"
+            boundary_labels.append(boundary_label)
+            boundary_tags.append(cls[shell])
+            gmsh.model.addPhysicalGroup(1, curve, cls[shell], name=boundary_label)
+            shell += 1
+
+        gmsh.model.addPhysicalGroup(2, [s], 666666, "Elements")
+        gmsh.model.geo.synchronize()
+        gmsh.model.mesh.generate(2)
+        gmsh.write(f"{output_path}/{mesh_name}.msh")
+        gmsh.finalize()
+
+    members = dict(zip(boundary_labels, boundary_tags))
+    boundaries = Enum("boundaries", members)
+
+    return uw.discretisation.Mesh(
+        f"{output_path}/{mesh_name}.msh",
+        degree=1,
+        qdegree=mesh_degree,
+        boundaries=boundaries,
+        boundary_normals=None,
+        coordinate_system_type=uw.coordinates.CoordinateSystemType.CARTESIAN,
+        useMultipleTags=True,
+        useRegions=True,
+        markVertices=True,
+    )

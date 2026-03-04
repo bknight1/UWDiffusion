@@ -10,8 +10,103 @@ from underworld3.systems import Poisson
 
 from .utilities import _adams_moulton_flux
 
+
+def _print_header(title):
+    print(f"\n# {title}")
+
+
+def _mesh_summary(mesh):
+    mesh_type = type(mesh).__name__
+    dim = getattr(mesh, "dim", "?")
+    min_radius = "?"
+    try:
+        min_radius = f"{mesh.get_min_radius():.6g}"
+    except Exception:
+        pass
+    return f"{mesh_type} (dim={dim}, min_radius={min_radius})"
+
+
+def _safe_symbol_text(value):
+    try:
+        return str(value)
+    except Exception:
+        return "<unavailable>"
+
+
+def _view_in_notebook():
+    return bool(getattr(uw, "is_notebook", False))
+
+
+def _view_in_vscode():
+    return bool(os.environ.get("VSCODE_PID") or os.environ.get("TERM_PROGRAM") == "vscode")
+
+
+def _latex_of(value):
+    try:
+        return value._repr_latex_()
+    except Exception:
+        try:
+            return sp.latex(sp.sympify(value))
+        except Exception:
+            return _safe_symbol_text(value)
+
+
+def _view_markdown(text):
+    if _view_in_notebook():
+        from IPython.display import Markdown, display
+
+        display(Markdown(text))
+    else:
+        print(text)
+
+
+def _view_latex(text):
+    if _view_in_notebook() and not _view_in_vscode():
+        from IPython.display import Latex, display
+
+        display(Latex(text))
+    else:
+        print(text)
+
+
+def _view_symbol(label, value):
+    if _view_in_notebook() and not _view_in_vscode():
+        _view_latex(rf"$\quad {label} = {_latex_of(value)}$")
+    else:
+        _view_markdown(f"- {label}: `{_safe_symbol_text(value)}`")
+
+
+def _non_dimensionalise_symbolic_value(value):
+    if isinstance(value, sp.Piecewise):
+        pairs = []
+        for expr_cond in value.args:
+            branch_value = expr_cond.args[0]
+            branch_condition = expr_cond.args[1]
+            pairs.append((_non_dimensionalise_symbolic_value(branch_value), branch_condition))
+        return sp.Piecewise(*pairs)
+
+    if hasattr(value, "sym"):
+        try:
+            sym_value = value.sym
+            if sym_value is not value:
+                return _non_dimensionalise_symbolic_value(sym_value)
+        except Exception:
+            pass
+
+    if hasattr(value, "units"):
+        return uw.scaling.non_dimensionalise(value)
+
+    return value
+
 class DiffusionModel:
     """Single-component diffusion model for one scalar field on a UW mesh.
+
+    Strong form solved (single component):
+
+        ∂C/∂t = ∇·(κ ∇C) + S
+
+    where ``C`` is concentration (or scalar field), ``κ`` is diffusivity, and
+    ``S`` is an optional source term.
 
     Use this class when you want to solve a standard diffusion problem for a
     single quantity (for example, one isotope concentration) with optional
@@ -161,7 +256,7 @@ class DiffusionModel:
         """
         Set the diffusivity of the variable (accepts dimensional value).
         """
-        new_diffusivity_nd = uw.scaling.non_dimensionalise(value)
+        new_diffusivity_nd = _non_dimensionalise_symbolic_value(value)
         self._diffusivity_expr.sym = new_diffusivity_nd
 
     def add_dirichlet_bc(self, boundary_conditions, ):
@@ -230,6 +325,36 @@ class DiffusionModel:
         """
         for name, hook in self.post_solve_hooks:
             hook()  # Optionally, you can use the name for logging or debugging
+
+    def view(self, verbose: int = 0, show_solver: bool = False):
+        """Display model summary using solver-style strong-form presentation."""
+        _view_markdown(f"## UWDiffusion {type(self).__name__}")
+        _view_markdown("### Details")
+        _view_markdown(f"- Variable: `{self.variable_name}`")
+        _view_markdown(f"- Mesh: `{_mesh_summary(self.mesh)}`")
+        _view_markdown(f"- Time stepper: `order={self.order}, step={self.step}, current_time={self.current_time}`")
+        _view_markdown(f"- Initialized: `{self._is_initialized}`")
+        _view_markdown(f"- Hooks: `pre={len(self.pre_solve_hooks)}, post={len(self.post_solve_hooks)}`")
+
+        _view_markdown("### Strong Form")
+        _view_latex(r"$\quad \frac{\partial u}{\partial t} = \nabla\cdot\left(\kappa\nabla u\right) + S$")
+
+        _view_markdown("### Unknowns / Coefficients")
+        _view_symbol(r"u", self.mesh_var.sym)
+        _view_symbol(r"\kappa", self._diffusivity_expr.sym)
+        _view_symbol(r"S", self.S)
+
+        if verbose >= 1:
+            _view_markdown("### Diagnostics")
+            _view_markdown(f"- Diffusivity expr: `{_safe_symbol_text(self._diffusivity_expr.sym)}`")
+            _view_markdown(f"- Source term S: `{_safe_symbol_text(self.S)}`")
+            _view_markdown(f"- History terms: `{len(self.flux_history)}`")
+
+        if show_solver:
+            _view_markdown("### Solver")
+            _view_markdown(f"- `{type(self.diffusion_solver).__name__}`")
+
+        return self
 
     def run_simulation(self, duration, max_dt=None, min_dt=None, time_step_factor=0.1):
         """
@@ -309,6 +434,15 @@ class DiffusionModel:
 
 class DiffusionDecayIngrowthModel:
     """Coupled parent-daughter diffusion model with radioactive decay/ingrowth.
+
+    Strong form solved (coupled system):
+
+        ∂C_p/∂t = ∇·(κ_p ∇C_p) - λ C_p
+        ∂C_d/∂t = ∇·(κ_d ∇C_d) + λ C_p
+
+    where ``C_p`` and ``C_d`` are parent and daughter concentrations,
+    ``κ_p`` and ``κ_d`` are diffusivities, and ``λ = ln(2)/t_1/2`` is the
+    decay constant from the specified half-life.
 
     Use this class when both species diffuse and are linked by radioactive
     decay, where parent loss is daughter gain during each timestep.
@@ -524,7 +658,7 @@ class DiffusionDecayIngrowthModel:
         """
         Set the diffusivity of the parent variable (accepts dimensional value).
         """
-        new_diffusivity_nd = uw.scaling.non_dimensionalise(value)
+        new_diffusivity_nd = _non_dimensionalise_symbolic_value(value)
         self._parent_diffusivity_expr.sym = new_diffusivity_nd
 
     @property
@@ -540,7 +674,7 @@ class DiffusionDecayIngrowthModel:
         """
         Set the diffusivity of the daughter variable (accepts dimensional value).
         """
-        new_diffusivity_nd = uw.scaling.non_dimensionalise(value)
+        new_diffusivity_nd = _non_dimensionalise_symbolic_value(value)
         self._daughter_diffusivity_expr.sym = new_diffusivity_nd
 
     def add_dirichlet_bc(self, boundary_conditions, solver_type='both'):
@@ -614,6 +748,46 @@ class DiffusionDecayIngrowthModel:
         """
         for name, hook in self.post_solve_hooks:
             hook()  # Optionally, you can use the name for logging or debugging
+
+    def view(self, verbose: int = 0, show_solver: bool = False):
+        """Display model summary using solver-style strong-form presentation."""
+        _view_markdown(f"## UWDiffusion {type(self).__name__}")
+        _view_markdown("### Details")
+        _view_markdown(f"- Parent: `{self.parent_name}`")
+        _view_markdown(f"- Daughter: `{self.daughter_name}`")
+        _view_markdown(f"- Mesh: `{_mesh_summary(self.mesh)}`")
+        _view_markdown(f"- Time stepper: `order={self.order}, step={self.step}, current_time={self.current_time}`")
+        _view_markdown(f"- Half life: `{self.half_life}`")
+        _view_markdown(f"- Decay constant (dim): `{self.lambda_decay}`")
+        _view_markdown(f"- Initialized: `{self._is_initialized}`")
+        _view_markdown(f"- Hooks: `pre={len(self.pre_solve_hooks)}, post={len(self.post_solve_hooks)}`")
+
+        _view_markdown("### Strong Form")
+        _view_latex(r"$\quad \frac{\partial C_p}{\partial t} = \nabla\cdot\left(\kappa_p\nabla C_p\right) - \lambda_{nd} C_p$")
+        _view_latex(r"$\quad \frac{\partial C_d}{\partial t} = \nabla\cdot\left(\kappa_d\nabla C_d\right) + \lambda_{nd} C_p$")
+
+        _view_markdown("### Unknowns / Coefficients")
+        _view_symbol(r"C_p", self.parent_mesh_var.sym)
+        _view_symbol(r"C_d", self.daughter_mesh_var.sym)
+        _view_symbol(r"\kappa_p", self._parent_diffusivity_expr.sym)
+        _view_symbol(r"\kappa_d", self._daughter_diffusivity_expr.sym)
+        _view_symbol(r"\lambda_{nd}", uw.scaling.non_dimensionalise(self.lambda_decay))
+
+        if verbose >= 1:
+            _view_markdown("### Diagnostics")
+            _view_markdown(f"- Parent diffusivity expr: `{_safe_symbol_text(self._parent_diffusivity_expr.sym)}`")
+            _view_markdown(f"- Daughter diffusivity expr: `{_safe_symbol_text(self._daughter_diffusivity_expr.sym)}`")
+            _view_markdown(f"- Parent source term: `{_safe_symbol_text(self.parent_S)}`")
+            _view_markdown(f"- Daughter source term: `{_safe_symbol_text(self.daughter_S)}`")
+            _view_markdown(f"- Parent history terms: `{len(self.parent_flux_history)}`")
+            _view_markdown(f"- Daughter history terms: `{len(self.daughter_flux_history)}`")
+
+        if show_solver:
+            _view_markdown("### Solver")
+            _view_markdown(f"- Parent: `{type(self.parent_diffusion).__name__}`")
+            _view_markdown(f"- Daughter: `{type(self.daughter_diffusion).__name__}`")
+
+        return self
 
 
     def _numerical_decay_ingrowth(self, time_step):
@@ -748,6 +922,17 @@ class DiffusionDecayIngrowthModel:
 
 class MulticomponentDiffusionModel:
     """Coupled multicomponent diffusion using a symbolic diffusion matrix.
+
+    Strong form solved (independent components ``i = 1, ..., n-1``):
+
+        ∂x_i/∂t = ∇·( Σ_j D_ij ∇x_j )
+
+    with closure for the implicit final component:
+
+        x_n = 1 - Σ_{i=1}^{n-1} x_i
+
+    where ``D_ij`` entries are provided symbolically via the diffusion matrix
+    and substituted at runtime from ``set_diffusion_values(...)``.
 
     Use this model when component fluxes are composition-coupled (including
     cross-diffusion terms), not just independent scalar diffusion.
@@ -971,10 +1156,7 @@ class MulticomponentDiffusionModel:
 
         for key, value in values.items():
             symbol = self._resolve_diffusion_symbol(key)
-            if hasattr(value, "units"):
-                value_nd = uw.scaling.non_dimensionalise(value)
-            else:
-                value_nd = value
+            value_nd = _non_dimensionalise_symbolic_value(value)
             self.diffusion_values[symbol] = value_nd
 
     def _substituted_diffusion_matrix(self, history_index=None):
@@ -1232,6 +1414,42 @@ class MulticomponentDiffusionModel:
         """
         for name, hook in self.post_solve_hooks:
             hook()
+
+    def view(self, verbose: int = 0, show_solver: bool = False):
+        """Display model summary using solver-style strong-form presentation."""
+        _view_markdown(f"## UWDiffusion {type(self).__name__}")
+        _view_markdown("### Details")
+        _view_markdown(f"- Components: `{self.component_names}`")
+        _view_markdown(f"- Independent components: `{self.n_independent}` (last component implicit)")
+        _view_markdown(f"- Mesh: `{_mesh_summary(self.mesh)}`")
+        _view_markdown(f"- Time stepper: `order={self.order}, step={self.step}, current_time={self.current_time}`")
+        _view_markdown(f"- Initialized: `{self._is_initialized}`")
+        _view_markdown(f"- Hooks: `pre={len(self.pre_solve_hooks)}, post={len(self.post_solve_hooks)}`")
+
+        _view_markdown("### Strong Form")
+        _view_latex(r"$\quad \frac{\partial x_i}{\partial t} = \nabla\cdot\left(\sum_j D_{ij}\nabla x_j\right),\quad i=1,\ldots,n-1$")
+        _view_latex(r"$\quad x_n = 1 - \sum_{i=1}^{n-1} x_i$")
+
+        _view_markdown("### Unknowns / Coefficients")
+        for comp_idx in range(self.n_independent):
+            comp_name = self.component_names[comp_idx]
+            _view_symbol(rf"x_{{{comp_idx + 1}}}~({comp_name})", self.mesh_vars[comp_idx].sym)
+        _view_symbol(r"\mathbf{D}", self.diffusion_matrix)
+
+        if verbose >= 1:
+            _view_markdown("### Diagnostics")
+            _view_markdown(f"- Diffusion matrix shape: `{self.diffusion_matrix.shape}`")
+            _view_markdown(f"- Diffusion matrix: `{_safe_symbol_text(self.diffusion_matrix)}`")
+            _view_markdown(f"- Diffusion symbol values set: `{len(self.diffusion_values)}`")
+            if self.diffusion_values:
+                for symbol, value in self.diffusion_values.items():
+                    _view_markdown(f"- `{symbol}`: `{_safe_symbol_text(value)}`")
+
+        if show_solver:
+            _view_markdown("### Solver")
+            _view_markdown(f"- `{len(self.solvers)} x {type(self.solvers[0]).__name__ if self.solvers else 'None'}`")
+
+        return self
 
     def run_simulation(self, duration, max_dt=None, min_dt=None, time_step_factor=0.1):
         """

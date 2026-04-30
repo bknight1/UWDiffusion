@@ -236,10 +236,16 @@ class DiffusionModel:
 
         self.DuDt.update_post_solve(dt)
 
-        history_len = min(self.order, len(self.DuDt.psi_star), len(self.flux_history), len(self.kappa_star))
 
+        self._refresh_flux_history()
+
+    def _refresh_flux_history(self):
+        """Rebuild Adams-Moulton flux history from current DDt history state."""
+        if self.order <= 0:
+            return
+
+        history_len = min(self.order, len(self.DuDt.psi_star), len(self.flux_history), len(self.kappa_star))
         for i in range(history_len):
-            # Update historical flux
             self.flux_history[i] = self.DuDt.psi_star[i].jacobian() * self.kappa_star[i]
 
     
@@ -413,6 +419,7 @@ class DiffusionModel:
                 dt_current=time_step,
                 dt_history=getattr(self.DuDt, "_dt_history", []),
             )
+            
             self.diffusion_solver.constitutive_model.Parameters.flux = flux_term
 
             ### solve 
@@ -608,10 +615,7 @@ class DiffusionDecayIngrowthModel:
         self.update_parent_kappa()
         self.parent_DuDt.update_post_solve(dt)
 
-        history_len = min(self.order, len(self.parent_DuDt.psi_star), len(self.parent_flux_history), len(self.parent_kappa_star))
-
-        for i in range(history_len):
-            self.parent_flux_history[i] = self.parent_DuDt.psi_star[i].jacobian() * self.parent_kappa_star[i]
+        self._refresh_parent_flux_history()
 
     def update_daughter_history_terms(self, dt=0.0):
         """Update daughter history terms."""
@@ -621,9 +625,30 @@ class DiffusionDecayIngrowthModel:
         self.update_daughter_kappa()
         self.daughter_DuDt.update_post_solve(dt)
 
-        history_len = min(self.order, len(self.daughter_DuDt.psi_star), len(self.daughter_flux_history), len(self.daughter_kappa_star))
+        self._refresh_daughter_flux_history()
 
-        for i in range(history_len):
+    def _refresh_parent_flux_history(self):
+        """Rebuild parent/daughter Adams-Moulton flux histories from current DDt history state."""
+        if self.order <= 0:
+            return
+
+        parent_history_len = min(
+            self.order,
+            len(self.parent_DuDt.psi_star),
+            len(self.parent_flux_history),
+            len(self.parent_kappa_star),
+        )
+        for i in range(parent_history_len):
+            self.parent_flux_history[i] = self.parent_DuDt.psi_star[i].jacobian() * self.parent_kappa_star[i]
+    
+    def _refresh_daughter_flux_history(self):
+        daughter_history_len = min(
+            self.order,
+            len(self.daughter_DuDt.psi_star),
+            len(self.daughter_flux_history),
+            len(self.daughter_kappa_star),
+        )
+        for i in range(daughter_history_len):
             self.daughter_flux_history[i] = self.daughter_DuDt.psi_star[i].jacobian() * self.daughter_kappa_star[i]
 
     def _setup_diffusion_solver(self, mesh_variable):
@@ -880,7 +905,9 @@ class DiffusionDecayIngrowthModel:
 
             # Update parent history terms and solve
             self.parent_diffusion.f = -(sp.simplify(self.parent_DuDt.bdf(order=bdf_order)) / time_step) + self.parent_S
+            
             parent_flux = self.parent_DuDt._psi_meshVar.jacobian() * self._parent_diffusivity_expr
+            
             parent_flux_term = _adams_moulton_flux(
                 parent_flux,
                 self.parent_flux_history,
@@ -894,7 +921,9 @@ class DiffusionDecayIngrowthModel:
 
             # Update daughter history terms and solve
             self.daughter_diffusion.f = -(sp.simplify(self.daughter_DuDt.bdf(order=bdf_order)) / time_step) + self.daughter_S
+
             daughter_flux = self.daughter_DuDt._psi_meshVar.jacobian() * self._daughter_diffusivity_expr
+            
             daughter_flux_term = _adams_moulton_flux(
                 daughter_flux,
                 self.daughter_flux_history,
@@ -1212,18 +1241,19 @@ class MulticomponentDiffusionModel:
         )
 
     def _estimate_max_coupled_diffusivity(self):
-        substituted_matrix = self._substituted_diffusion_matrix(history_index=None)
-        max_values = []
-        for i in range(self.n_independent):
-            for j in range(self.n_independent):
-                coeff = substituted_matrix[i, j]
-                coeff_vals = uw.function.evaluate(coeff, self.mesh.data)
-                max_values.append(np.max(np.abs(coeff_vals)))
+        return max(self.diffusion_values.values())
+        # substituted_matrix = self._substituted_diffusion_matrix(history_index=None)
+        # max_values = []
+        # for i in range(self.n_independent):
+        #     for j in range(self.n_independent):
+        #         coeff = substituted_matrix[i, j]
+        #         coeff_vals = uw.function.evaluate(coeff, self.mesh.data)
+        #         max_values.append(np.max(np.abs(coeff_vals)))
 
-        if len(max_values) == 0:
-            return 0.0
+        # if len(max_values) == 0:
+        #     return 0.0
 
-        return float(np.max(max_values))
+        # return float(np.max(max_values))
 
     def update_kappa(self):
         """Update diffusivity chains for independent components from substituted diffusion matrix."""
@@ -1250,10 +1280,21 @@ class MulticomponentDiffusionModel:
         for comp_idx in range(self.n_independent):
             self.DuDt_list[comp_idx].update_post_solve(dt)
 
+        self._refresh_flux_history()
+
+    def _refresh_flux_history(self):
+        """Rebuild Adams-Moulton flux history from current DDt history state.
+
+        This is useful when user pre-solve hooks manually modify fields and/or
+        DDt history terms before the next solve. Recomputing here keeps
+        `flux_history_list` consistent with `psi_star` before it is consumed.
+        """
+        if self.order <= 0:
+            return
+
         history_len = min(
             self.order,
             self.flux_history_list.shape[1] // self.mesh.dim,
-            *(len(self.kappa_star_list[comp_idx]) for comp_idx in range(self.n_independent)),
             *(len(self.DuDt_list[comp_idx].psi_star) for comp_idx in range(self.n_independent)),
         )
 
@@ -1495,7 +1536,10 @@ class MulticomponentDiffusionModel:
             # Pre-solve hook
             self.run_pre_solve_hooks()
 
+
             flux_matrix_current = self._compute_flux_matrix(history_index=None)
+            # self._refresh_flux_history()
+
             effective_order = min(self.order, self.step + 1)
             bdf_order = max(1, effective_order)
 

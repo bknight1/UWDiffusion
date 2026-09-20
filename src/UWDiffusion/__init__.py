@@ -1,7 +1,23 @@
-from .Models import *
-from .meshing import *
-from .utilities import *
+try:
+    from .Models import *
+    from .meshing import *
+    from .utilities import *
+except (ImportError, RuntimeError):
+    # Underworld3 or MPI may not be available in all execution environments.
+    pass
 
-# from .solvers import SNES_Diffusion
+from .fd_1d import (
+    BoundaryCondition,
+    MulticomponentDiffusion1D,
+    SimulationResult,
+    darken_reduced_diffusivity,
+    reduce_diffusion_matrix,
+)
 
-# __all__ = ["DiffusionModel", "DiffusionDecayIngrowthModel", "constant_diffusivity", "T_dep_diffusivity", "PT_dep_diffusivity", "custom_diffusivity"]
+__all__ = [
+    "BoundaryCondition",
+    "MulticomponentDiffusion1D",
+    "SimulationResult",
+    "darken_reduced_diffusivity",
+    "reduce_diffusion_matrix",
+]

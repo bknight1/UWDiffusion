@@ -225,8 +225,11 @@ def _adams_moulton_flux(flux, flux_history, order=None, dt_current=None, dt_hist
             return None
 
     with sp.core.evaluate(False):
-        if order == 1:
-            return (flux + flux_history[0]) / 2
+        # Order 0 or 1 => pure Backward Euler (fully implicit flux).
+        # This is both A-stable AND L-stable, unlike Crank-Nicolson
+        # (CN lacks L-stability and oscillates at large diffusion numbers).
+        if order <= 1:
+            return flux
 
         if order == 2:
             dt_n = _to_float(dt_current)

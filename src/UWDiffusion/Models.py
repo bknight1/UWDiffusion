@@ -589,6 +589,7 @@ class DiffusionDecayIngrowthModel:
         self.daughter_diffusion = self._setup_diffusion_solver(self.daughter_mesh_var)
 
 
+
     def update_parent_kappa(self):
         """Update parent diffusivity chain."""
         if self.order == 0:
@@ -994,7 +995,8 @@ class MulticomponentDiffusionModel:
                  diffusion_matrix=None,
                  diffusion_values=None,
                  degree=2,
-                 order=1):
+                 order=1,
+                 lag_composition=False):
         """
         Initialize a multicomponent diffusion model with coupled diffusion.
 
@@ -1007,6 +1009,12 @@ class MulticomponentDiffusionModel:
                     to values (dimensional pint or non-dimensional float).
         - degree: Degree of the finite element basis functions (int, default=2)
         - order: Order of the diffusion solver (int, default=1)
+        - lag_composition: If True, evaluate the composition-dependent diffusion
+            matrix at the previous timestep's composition (Picard linearisation)
+            instead of the current unknown state. This makes the operator linear
+            (no Newton iteration) and unconditionally A/L-stable with BDF1.
+            Recommended for large-timestep geological simulations where the
+            Crank-Nicolson flux averaging would cause oscillations.
         """
         self.component_names = component_names
         self.n_components = len(component_names)
@@ -1016,6 +1024,7 @@ class MulticomponentDiffusionModel:
         self._ddt_order = max(1, order)
         self.mesh = mesh
 
+        self.lag_composition = lag_composition
         self.current_time = 0.0
         self.step = 0
 
@@ -1492,6 +1501,66 @@ class MulticomponentDiffusionModel:
 
         return self
 
+    # ------------------------------------------------------------------ #
+    def _update_jacobian_flux(self):
+        """Build constant-coefficient Jacobian flux for each component solver.
+
+        The exact residual flux contains composition-dependent coefficients::
+
+            flux_i = Σ_j D_ij(Fe, Mg, Mn) · ∇x_j
+
+        When wrapped as UWexpressions these become opaque to SymPy ``diff``,
+        so the Jacobian matrix G3 = ∂F1/∂(∇u) is **zero** — Newton has no
+        gradient information about the diffusion operator and converges
+        pathologically slowly (sometimes 50+ iterations for Mn).
+
+        This method evaluates D_ij at the current average mesh composition,
+        freezes them to scalars, and stores a simplified flux on each
+        solver's constitutive model via ``flux_jacobian``::
+
+            flux_jacobian_i = Σ_j D_ij(Fe₀, Mg₀, Mn₀) · ∇x_j
+
+        The solver differentiates *this* expression for the Jacobian,
+        giving a clean SPD operator ``D_ii · ∇·∇ + mass/dt`` while the
+        residual keeps the exact composition-dependent physics.
+
+        Call at least once per timestep (after fields are updated).
+        """
+        # Representative composition for the Jacobian coefficients.
+        with self.mesh.access(*self.mesh_vars):
+            Fe_avg = float(np.mean(self.mesh_vars[0].data[:, 0]))
+            Mg_avg = float(np.mean(self.mesh_vars[1].data[:, 0]))
+            Mn_avg = float(np.mean(self.mesh_vars[2].data[:, 0]))
+        Ca_avg = 1.0 - Fe_avg - Mg_avg - Mn_avg
+
+        # Build substitution: tracer D values + composition as FLOATS
+        subs = dict(self.diffusion_values)
+        for symbol in self.diffusion_matrix.free_symbols:
+            name = self._symbol_name(symbol)
+            m = re.match(r"^xi_(\d+)$", name)
+            if m:
+                idx = int(m.group(1))
+                if   idx == 1:  subs[symbol] = Fe_avg
+                elif idx == 2:  subs[symbol] = Mg_avg
+                elif idx == 3:  subs[symbol] = Mn_avg
+                elif idx == 4:  subs[symbol] = Ca_avg
+
+        D_const = self.diffusion_matrix.subs(subs)   # pure numbers
+
+        for comp_idx in range(self.n_independent):
+            flux_comps = []
+            for d in range(self.mesh.dim):
+                expr = 0.0
+                for j in range(self.n_independent):
+                    coeff = float(D_const[comp_idx, j])
+                    expr += coeff * self.mesh_vars[j].jacobian()[d]
+                flux_comps.append(expr)
+
+            jac_flux = sp.Matrix(flux_comps).reshape(self.mesh.dim, 1)
+            self.solvers[comp_idx].constitutive_model.flux_jacobian = jac_flux
+            self.solvers[comp_idx].consistent_jacobian = True
+    # ------------------------------------------------------------------ #
+
     def run_simulation(self, duration, max_dt=None, min_dt=None, time_step_factor=0.1):
         """
         Run the multicomponent diffusion simulation for the specified duration.
@@ -1536,9 +1605,24 @@ class MulticomponentDiffusionModel:
             # Pre-solve hook
             self.run_pre_solve_hooks()
 
+            # Provide a constant-coefficient flux for the Jacobian so the
+            # solver gets a clean SPD operator (stiffness + mass) instead
+            # of the zero G3 from UWexpression-wrapped composition terms.
+            self._update_jacobian_flux()
 
-            flux_matrix_current = self._compute_flux_matrix(history_index=None)
-            # self._refresh_flux_history()
+            # Build the coupled flux for the current timestep.
+            #
+            # If lag_composition=True, evaluate D_ij at the previous timestep's
+            # composition (psi_star[0]) while keeping gradients at the current
+            # (unknown) state.  This makes the operator *linear* per timestep:
+            # no Newton iteration is needed and BDF1 is unconditionally
+            # A/L-stable.
+            if self.lag_composition:
+                diff_mat = self._substituted_diffusion_matrix(history_index=0)
+                grad_mat, grad_subs = self._build_gradient_substitutions(history_index=None)
+                flux_matrix_current = (diff_mat * grad_mat).subs(grad_subs)
+            else:
+                flux_matrix_current = self._compute_flux_matrix(history_index=None)
 
             effective_order = min(self.order, self.step + 1)
             bdf_order = max(1, effective_order)
@@ -1554,7 +1638,10 @@ class MulticomponentDiffusionModel:
                 # Construct coupled flux from matrix form: (D_matrix * grad_matrix).subs(...)
                 flux = flux_matrix_current[comp_idx, 0]
 
-                # Apply Adams-Moulton flux correction using component's history
+                # Apply Adams-Moulton flux correction using component's history.
+                # Note: with the fix in utilities.py, order <= 1 now returns
+                # pure `flux` (Backward Euler, A-stable + L-stable), not the
+                # Crank-Nicolson average which oscillates at large dt.
                 flux_history_comp = [
                     self._get_flux_history_vector(comp_idx, i)
                     for i in range(effective_order)

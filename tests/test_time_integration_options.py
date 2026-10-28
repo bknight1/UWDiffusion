@@ -23,7 +23,11 @@ try:
     import sympy as sp
     import underworld3 as uw
 
-    from UWDiffusion import DiffusionModel, MulticomponentDiffusionModel
+    from UWDiffusion import (
+        DiffusionDecayIngrowthModel,
+        DiffusionModel,
+        MulticomponentDiffusionModel,
+    )
 except Exception as exc:  # pragma: no cover - environment dependent
     pytest.skip(
         f"Underworld3/MPI/Gmsh environment unavailable: {exc}",
@@ -114,6 +118,50 @@ def test_order2_temporal_convergence():
 def test_order_greater_than_3_rejected():
     with pytest.raises(NotImplementedError):
         DiffusionModel("C", _mesh(4), degree=2, order=4)
+
+
+def test_default_degree_and_order():
+    """Defaults are ``degree=1, order=1`` and reproduce an explicit run.
+
+    Every other test in the suite pins ``degree`` and ``order`` explicitly, so
+    the defaults are otherwise unexercised.  ``degree=1, order=1`` is the
+    documented choice for sharp growth interfaces (and the cheapest option), so
+    it needs its own guard.
+    """
+    mesh = _mesh()
+    for model in (
+        DiffusionModel("C", mesh),
+        MulticomponentDiffusionModel(["A", "B"], mesh, closure=False),
+        DiffusionDecayIngrowthModel("P", "D", mesh, 1.0e9),
+    ):
+        assert model.degree == 1, f"{type(model).__name__}.degree default is not 1"
+        assert model.order == 1, f"{type(model).__name__}.order default is not 1"
+
+    dt, T = 2.0e-3, 0.02
+
+    def _run(use_defaults):
+        """use_defaults=True passes neither degree nor order."""
+        m = _mesh(12)
+        kwargs = {} if use_defaults else {"degree": 1, "order": 1}
+        model = DiffusionModel("C", m, **kwargs)
+        model.diffusivity = 1.0
+        _tighten(model)
+        coords = model.mesh_var.coords
+        with m.access(model.mesh_var):
+            model.mesh_var.data[:, 0] = _cos_mode(coords)
+        model.run_simulation(duration=T, min_dt=dt, max_dt=dt)
+        with m.access(model.mesh_var):
+            vals = model.mesh_var.data[:, 0].copy()
+        exact = _cos_mode(coords) * np.exp(-2.0 * PI**2 * 1.0 * T)
+        return float(np.max(np.abs(vals - exact))), int(model.step)
+
+    err_default, steps_default = _run(True)
+    err_explicit, steps_explicit = _run(False)
+
+    assert steps_default == steps_explicit
+    assert err_default == pytest.approx(err_explicit, rel=1e-12), (
+        f"default run {err_default:.6e} != explicit degree=1,order=1 {err_explicit:.6e}"
+    )
 
 
 # ==============================================================================

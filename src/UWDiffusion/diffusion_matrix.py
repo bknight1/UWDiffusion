@@ -261,3 +261,63 @@ def lasaga_matrix(d_symbols: Sequence[Any], x_symbols: Sequence[Any]) -> Any:
                 - (d_symbols[i] * x_symbols[i]) / denom * (d_symbols[j] - d_symbols[-1])
             )
     return matrix
+
+
+def lasaga_matrix_from_components(component_names: Sequence[str]) -> Any:
+    """Symbolic Lasaga matrix built directly from component names.
+
+    Convenience wrapper over :func:`lasaga_matrix` that builds the symbol lists
+    for you, so the ``xi_1 .. xi_n`` naming contract cannot be got wrong.  The
+    alternative is five lines of boilerplate per model, and getting the
+    composition symbols wrong fails *silently* -- they are discovered by regex
+    on their name and anything else is left unsubstituted.
+
+    The **formulation is a physical assumption**, which is why it is named and
+    not inferred from ``component_names`` alone.  Lasaga (1979) mean field is
+    one closure among several (Darken, a measured matrix, ...); pass a matrix
+    explicitly to :class:`UWDiffusion.Models.MulticomponentDiffusionModel` if
+    you want a different one.
+
+    Parameters
+    ----------
+    component_names : sequence of str
+        Component names in order.  The **last** entry is the dependent
+        (closure) component, matching
+        ``MulticomponentDiffusionModel(..., closure=True)``, so ``["Fe", "Mg",
+        "Mn", "Ca"]`` makes Ca dependent.
+
+    Returns
+    -------
+    sympy.Matrix
+        ``(n-1) x (n-1)`` symbolic matrix.  Composition symbols are named
+        ``xi_1 .. xi_n`` and tracer diffusivities ``D_<component>``, so
+        ``set_diffusion_values`` accepts either ``{"Fe": ..., ...}`` or
+        ``{"D_Fe": ..., ...}``.
+
+    Raises
+    ------
+    ValueError
+        If fewer than 2 components are given, or a name is not a non-empty
+        string.
+
+    Examples
+    --------
+    >>> D_sym = lasaga_matrix_from_components(["Fe", "Mg", "Mn", "Ca"])
+    >>> D_sym.shape
+    (3, 3)
+    """
+    import sympy  # local: the numeric path above must not require SymPy
+
+    names = list(component_names)
+    n = len(names)
+    if n < 2:
+        raise ValueError(f"Need at least 2 components, got {n}.")
+    for name in names:
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(
+                f"Component names must be non-empty strings, got {name!r}."
+            )
+
+    d_symbols = [sympy.Symbol(f"D_{name}") for name in names]
+    x_symbols = [sympy.Symbol(f"xi_{k}") for k in range(1, n + 1)]
+    return lasaga_matrix(d_symbols, x_symbols)

@@ -8,6 +8,7 @@ except (ImportError, RuntimeError):
 
 from .diffusion_matrix import (
     lasaga_matrix,
+    lasaga_matrix_from_components,
     lasaga_reduced_diffusivity,
     reduce_diffusion_matrix,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "TracerDiffusivity",
     "cg92_ca",
     "lasaga_matrix",
+    "lasaga_matrix_from_components",
     "lasaga_reduced_diffusivity",
     "reduce_diffusion_matrix",
 ]

@@ -144,7 +144,7 @@ class MulticomponentDiffusionModel:
     always evaluated at the new time level (fully implicit), so every order is
     A- and L-stable:
 
-    * ``order=1`` -- backward Euler, ``O(dt)``.
+    * ``order=1`` -- backward Euler, ``O(dt)`` (the default).
     * ``order=2`` -- BDF2, ``O(dt^2)``:
       ``(3 x^{n+1} - 4 x^n + x^{n-1}) / (2 dt)``.
     * ``order=3`` -- BDF3, ``O(dt^3)``.
@@ -178,7 +178,7 @@ class MulticomponentDiffusionModel:
                  mesh,
                  diffusion_matrix=None,
                  diffusion_values=None,
-                 degree=2,
+                 degree=1,
                  order=1,
                  closure=True):
         """
@@ -190,7 +190,7 @@ class MulticomponentDiffusionModel:
             If None, a zero matrix is used until set.
         - diffusion_values: optional dict mapping diffusivity symbols to values
             (dimensional Pint or non-dimensional float).
-        - degree: FE basis degree (default 2)
+        - degree: FE basis degree (default 1)
         - order: time integration order, 1-3 (default 1 = backward Euler)
         - closure: if True the last component is ``1 - sum`` of the rest.
         """
@@ -483,6 +483,15 @@ class MulticomponentDiffusionModel:
             key_name = self._symbol_name(sp.Symbol(key))
             for symbol in self._diffusion_matrix.free_symbols:
                 if self._symbol_name(symbol) == key_name:
+                    return symbol
+            # Accept a bare component name too: matrices built by
+            # ``lasaga_matrix_from_components`` name their tracer symbols
+            # ``D_<component>``, so {"Fe": ...} should work as well as
+            # {"D_Fe": ...}.  Purely a convenience alias -- an unknown key
+            # still raises rather than being silently ignored.
+            fallback_name = self._symbol_name(sp.Symbol(f"D_{key}"))
+            for symbol in self._diffusion_matrix.free_symbols:
+                if self._symbol_name(symbol) == fallback_name:
                     return symbol
         raise KeyError(f"Could not resolve diffusion symbol key: {key}")
 
@@ -1059,12 +1068,12 @@ class DiffusionModel(MulticomponentDiffusionModel):
     5. Optionally register hooks, then ``run_simulation(...)``.
     """
 
-    def __init__(self, variable_name, mesh, degree=2, order=1):
+    def __init__(self, variable_name, mesh, degree=1, order=1):
         """
         Parameters:
         - variable_name: name of the scalar field (str)
         - mesh: underworld3 mesh object
-        - degree: FE basis degree (default 2)
+        - degree: FE basis degree (default 1)
         - order: time integration order, 1-3 (default 1 = backward Euler)
         """
         self.variable_name = variable_name
@@ -1203,14 +1212,14 @@ class DiffusionDecayIngrowthModel(MulticomponentDiffusionModel):
     """
 
     def __init__(self, parent_name, daughter_name, mesh, half_life,
-                 degree=2, order=1):
+                 degree=1, order=1):
         """
         Parameters:
         - parent_name: Name of the parent isotope (str)
         - daughter_name: Name of the daughter isotope (str)
         - mesh: underworld3 mesh object
         - half_life: Half-life of the parent isotope in years (float)
-        - degree: FE basis degree (default 2)
+        - degree: FE basis degree (default 1)
         - order: time integration order, 1-3 (default 1)
         """
         self.parent_name = parent_name

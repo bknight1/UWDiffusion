@@ -116,7 +116,11 @@ try:
 
     import underworld3 as uw
 
-    from UWDiffusion import DiffusionModel, MulticomponentDiffusionModel
+    from UWDiffusion import (
+        DiffusionModel,
+        MulticomponentDiffusionModel,
+        lasaga_matrix,
+    )
 except Exception as exc:  # pragma: no cover - environment dependent
     pytest.skip(
         f"Underworld3/MPI/Gmsh environment unavailable: {exc}",
@@ -687,3 +691,65 @@ def test_annulus_multicomponent_cross_diffusion_eigenmode() -> None:
         assert drift < 1e-6, f"{name} mass drift {drift:.3e} >= 1e-6"
         assert abs(m1 - m0) == pytest.approx(0.0, abs=1e-6)
 
+
+
+# ==============================================================================
+# Generic component count
+# ==============================================================================
+
+
+def _lasaga_matrix(n_components: int):
+    """(n-1)x(n-1) Lasaga mean-field matrix, entries referencing ``xi_1..xi_n``."""
+    d = sp.symbols(f"d0:{n_components}")
+    xi = sp.symbols(f"xi_1:{n_components + 1}")
+    return lasaga_matrix(list(d), list(xi)), d
+
+
+@pytest.mark.parametrize("n_components", [2, 3, 5])
+def test_multicomponent_model_accepts_any_component_count(n_components: int) -> None:
+    """The monolithic solver resolves ``xi_k`` generically: any ``n`` works.
+
+    The split solver it replaced hardcoded four components -- ``xi_1..xi_4``
+    and ``mesh_vars[0..2]`` -- so ``n < 4`` raised ``IndexError``, ``n > 4``
+    raised ``TypeError``, and ``n == 3`` silently substituted a *global* mean
+    of the closure field for its local value.  Those are the failure modes
+    this guards: the model must build and step at n = 2, 3 and 5.
+
+    A uniform state is an exact fixed point of the discrete problem with
+    natural (unconstrained) boundaries, so it must survive a step unchanged --
+    and closure must hold node by node throughout.
+    """
+    mesh = uw.meshing.Annulus(
+        radiusOuter=1.0, radiusInner=0.5, cellSize=0.1, qdegree=2
+    )
+    matrix, d_syms = _lasaga_matrix(n_components)
+    components = [f"C{k}" for k in range(n_components)]
+    model = MulticomponentDiffusionModel(
+        components, mesh, diffusion_matrix=matrix, degree=2, order=1
+    )
+    # Unequal tracer diffusivities so the cross terms are non-zero.
+    model.set_diffusion_values(
+        {str(d_syms[k]): 1.0 + 0.1 * k for k in range(n_components)}
+    )
+    for solver in model.solvers:
+        solver.petsc_options["snes_rtol"] = 1e-12
+        solver.petsc_options["snes_atol"] = 1e-10
+
+    # Uniform state with a positive closure component.
+    shares = np.linspace(0.1, 0.3, n_components - 1)
+    state = np.concatenate([shares, [1.0 - float(shares.sum())]])
+    assert state[-1] > 0.0
+
+    with mesh.access(*model.mesh_vars):
+        for k, var in enumerate(model.mesh_vars):
+            var.data[:, 0] = state[k]
+
+    model.sync_history_to_state()
+    model.run_simulation(duration=0.01, min_dt=0.01, max_dt=0.01)
+
+    with mesh.access(*model.mesh_vars):
+        got = np.array([var.data[:, 0] for var in model.mesh_vars])
+
+    expected = np.repeat(state[:, None], got.shape[1], axis=1)
+    np.testing.assert_allclose(got, expected, atol=1e-8)
+    np.testing.assert_allclose(got.sum(axis=0), 1.0, atol=1e-12)

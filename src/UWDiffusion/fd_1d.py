@@ -122,145 +122,10 @@ _RADIUS_PARAM_NAMES = frozenset(
 )
 
 
-def darken_reduced_diffusivity(
-    tracer_diffusivities: Sequence[float] | np.ndarray,
-    composition: Sequence[float] | np.ndarray,
-    dependent_component: int | str = -1,
-) -> np.ndarray:
-    """Build the reduced (N-1) x (N-1) interdiffusion matrix from tracer diffusivities.
-
-    Implements the composition-dependent Darken / CZGM formulation:
-
-        D_ij = D_i * delta_ij - (D_i * X_i / sum_k D_k X_k) * (D_j - D_dep)
-
-    where ``D_i`` are the tracer (self) diffusivities of the N components,
-    ``X_k`` the mole fractions, and ``D_dep`` the tracer diffusivity of the
-    dependent (closure) component.  This is exactly the reduced matrix used
-    in the CZGM garnet benchmark
-    (``Tutorials/Diffusion/CZGM_garnet_model_annulus.ipynb``):
-
-        D_matrix_3x3[i, j] = D_i * delta_ij
-                             - (D_i * X_i / sum_k D_k X_k) * (D_j - D_Ca)
-
-    Parameters
-    ----------
-    tracer_diffusivities : array_like
-        1D array of tracer diffusivities of length N, one per component.
-    composition : array_like
-        Mole fractions of all N components at the evaluation point
-        (sum must be > 0).
-    dependent_component : int or str, optional
-        Index (0-based) of the dependent component. A string is only allowed
-        when ``composition`` is a mapping; for arrays an index is expected.
-        Default is -1 (the last component, i.e. Ca in CZGM).
-
-    Returns
-    -------
-    np.ndarray
-        Reduced (N-1) x (N-1) interdiffusion matrix.
-
-    Raises
-    ------
-    ValueError
-        If inputs are inconsistent or the denominator sum(D_k X_k) <= 0.
-    """
-    D = np.asarray(tracer_diffusivities, dtype=float)
-    X = np.asarray(composition, dtype=float)
-
-    if isinstance(dependent_component, str):
-        raise TypeError(
-            "dependent_component for darken_reduced_diffusivity must be an "
-            "integer index (a string name is not resolvable from arrays)."
-        )
-
-    if D.ndim != 1 or X.ndim != 1:
-        raise ValueError(
-            f"tracer_diffusivities and composition must be 1D arrays, got "
-            f"{D.shape} and {X.shape}."
-        )
-    if D.shape[0] != X.shape[0]:
-        raise ValueError(
-            f"tracer_diffusivities ({D.shape[0]}) and composition ({X.shape[0]}) "
-            "must have the same length N."
-        )
-    N = D.shape[0]
-    if N < 2:
-        raise ValueError(f"Need at least 2 components, got N={N}.")
-    if np.any(D < 0.0):
-        raise ValueError("Tracer diffusivities must be non-negative.")
-    if np.any(X < 0.0):
-        raise ValueError("Mole fractions must be non-negative.")
-
-    dep = int(dependent_component) % N
-    denom = float(np.sum(D * X))
-    if not np.isfinite(denom) or denom <= 0.0:
-        raise ValueError(
-            f"Invalid Darken denominator sum(D_k X_k) = {denom}; it must be "
-            "positive and finite."
-        )
-
-    indep = [k for k in range(N) if k != dep]
-    P = N - 1
-    D_red = np.zeros((P, P), dtype=float)
-    for i_new, i in enumerate(indep):
-        for j_new, j in enumerate(indep):
-            D_red[i_new, j_new] = D[i] * (1.0 if i == j else 0.0) - (
-                D[i] * X[i] / denom
-            ) * (D[j] - D[dep])
-    return D_red
-
-
-def reduce_diffusion_matrix(
-    D_full: np.ndarray,
-    dependent_idx: int = -1,
-) -> np.ndarray:
-    """Reduce an N x N multicomponent diffusion matrix to an (N-1) x (N-1) interdiffusion matrix.
-
-    Given N chemical components whose mole fractions sum to unity (sum_k X_k = 1),
-    the concentration gradient of the dependent component d satisfies:
-        grad(X_d) = - sum_{j != d} grad(X_j).
-
-    Substituting this into the flux relation:
-        J_i = - sum_k D_ik grad(X_k)
-    yields for all independent components i != d:
-        J_i = - sum_{j != d} (D_ij - D_id) grad(X_j).
-
-    Therefore, the reduced matrix entries are:
-        D_red[i, j] = D[i, j] - D[i, d].
-
-    Parameters
-    ----------
-    D_full : np.ndarray
-        Full N x N diffusion matrix.
-    dependent_idx : int, optional
-        Index of the dependent component. Default is -1 (the last component).
-
-    Returns
-    -------
-    np.ndarray
-        Reduced (N-1) x (N-1) interdiffusion matrix.
-
-    Raises
-    ------
-    ValueError
-        If D_full is not square or has dimension < 2.
-    """
-    D_arr = np.asarray(D_full, dtype=float)
-    if D_arr.ndim != 2 or D_arr.shape[0] != D_arr.shape[1]:
-        raise ValueError(f"D_full must be a 2D square matrix, got shape {D_arr.shape}.")
-    N = D_arr.shape[0]
-    if N < 2:
-        raise ValueError(f"D_full must have dimension at least 2, got {N}.")
-
-    dep = dependent_idx % N
-    indep = [k for k in range(N) if k != dep]
-
-    D_red = np.zeros((N - 1, N - 1), dtype=float)
-    for i_new, i in enumerate(indep):
-        for j_new, j in enumerate(indep):
-            D_red[i_new, j_new] = D_arr[i, j] - D_arr[i, dep]
-
-    return D_red
+from .diffusion_matrix import (
+    lasaga_reduced_diffusivity,
+    reduce_diffusion_matrix,
+)
 
 
 @dataclass
@@ -534,11 +399,18 @@ class MulticomponentDiffusion1D:
         | None = None,
         picard_max_iter: int = 20,
         picard_tol: float = 1e-8,
+        centre: str = "zero_flux",
     ) -> None:
         self._init_grid(grid)
         self._init_geometry(geometry)
         self._init_components(components, dependent_component)
         self._init_measures()
+
+        if centre not in ("zero_flux", "mirror"):
+            raise ValueError(
+                f"centre must be 'zero_flux' or 'mirror', got {centre!r}."
+            )
+        self.centre = centre
 
         self.picard_max_iter = int(picard_max_iter)
         self.picard_tol = float(picard_tol)
@@ -591,6 +463,9 @@ class MulticomponentDiffusion1D:
 
         self.r = r
         self.n_points = len(r)
+        # Full grid retained so a growing-domain run (apply_growth with
+        # grow_domain=True) can extend the active extent back out to it.
+        self._r_full = r
 
     def _init_geometry(self, geometry: GeometryType | int | str) -> None:
         """Configure coordinate geometry factor alpha."""
@@ -713,6 +588,45 @@ class MulticomponentDiffusion1D:
             self.T_faces = 1.0 / dr
         else:
             self.T_faces = (r_faces**alpha) / dr
+
+    def _set_extent(self, n: int) -> None:
+        """Make the first ``n`` vertices the active domain.
+
+        Used by :meth:`apply_growth` with ``grow_domain=True`` to reproduce the
+        CZGM MATLAB driver, which runs its diffusion step on the sub-grid
+        ``Rr(1:i)`` -- the grain grows, so vertices beyond the growth front do
+        not exist and no flux crosses it.  Truncating the active extent gives
+        exactly that: the rim vertex is then the *last* vertex and carries the
+        half control volume a boundary vertex gets, whereas pinning it on the
+        full grid would leave it an interior vertex with a full one.
+
+        Only the active extent changes; the full grid in ``self._r_full`` is
+        kept so the domain can grow again.  Any state in the hidden tail is
+        discarded, which is safe because ``apply_growth`` writes the rim
+        composition into every vertex it reveals.
+        """
+        n = int(n)
+        if n < 2:
+            raise ValueError(f"Active extent must be at least 2 vertices, got {n}.")
+        if n > len(self._r_full):
+            raise ValueError(
+                f"Active extent {n} exceeds the full grid ({len(self._r_full)})."
+            )
+        if n == self.n_points:
+            return
+
+        old_n = self.n_points
+        self.r = self._r_full[:n]
+        self.n_points = n
+
+        X_new = np.zeros((n, self.n_components), dtype=float)
+        keep = min(old_n, n)
+        X_new[:keep] = self._X[:keep]
+        self._X = X_new
+
+        self._init_measures()
+        self._internal_bcs = {}
+        self._cached_solver_valid = False
 
     def set_diffusivity(
         self,
@@ -1229,18 +1143,19 @@ class MulticomponentDiffusion1D:
         new_radius: float,
         composition: dict[str, Any] | np.ndarray | float,
         set_rim_bc: bool = True,
+        pin_front: bool = True,
+        grow_domain: bool = False,
     ) -> np.ndarray:
         """Apply a concentric growth step with a new moving-rim composition.
 
-        This emulates grain growth with a moving boundary on the fixed 1D
-        grid used in the CZGM benchmark
+        This emulates grain growth with a moving boundary on the 1D grid used
+        in the CZGM benchmark
         (``Tutorials/Diffusion/CZGM_garnet_model_annulus.ipynb``): every grid
         vertex with ``r > new_radius`` is overwritten with the supplied rim
         composition (the newly added shell), the dependent component is
-        recomputed for closure, and -- by default -- the right (rim) boundary
-        condition is re-pinned to the new rim composition as a Dirichlet
-        value, holding the exposed rim at the growth composition until the
-        next growth step.
+        recomputed for closure, and -- by default -- the growth front itself
+        is pinned as a Dirichlet condition, holding the exposed rim at the
+        growth composition until the next growth step.
 
         Parameters
         ----------
@@ -1250,8 +1165,32 @@ class MulticomponentDiffusion1D:
             Rim composition for the newly grown material. See
             ``_resolve_rim_composition`` for accepted forms.
         set_rim_bc : bool, optional
-            If True (default), also set the right boundary to a Dirichlet
-            condition on the new rim composition.
+            If True (default), pin the growth front as a Dirichlet condition
+            on the new rim composition.
+        pin_front : bool, optional
+            If True (default), also freeze every vertex at or beyond
+            ``new_radius`` via :meth:`set_internal_bcs`, so the grain
+            effectively *ends* at the front.  Ignored when ``grow_domain`` is
+            True (the domain genuinely ends there, so there is nothing to
+            pin).  Set ``pin_front=False`` to recover plain stamping.
+        grow_domain : bool, optional
+            If True, **truncate the active domain** to ``new_radius`` so the
+            grain really ends at the front -- the faithful reproduction of the
+            CZGM MATLAB driver, which runs its diffusion step on the sub-grid
+            ``Rr(1:i)``.
+
+            This is the exact version of what ``pin_front`` approximates.  The
+            difference is not cosmetic: on a truncated grid the rim vertex is
+            the *last* vertex and gets the half control volume a boundary
+            vertex has, whereas pinning it on the full grid leaves it an
+            interior vertex with a full control volume.  Measured on the CZGM
+            planar benchmark against ``combined_C_final_cart.csv``, the centre
+            relaxes to 82% of the reference with ``pin_front`` and to ~100%
+            with ``grow_domain``.
+
+            The full grid is retained internally, so successive calls grow the
+            active extent back out along it.  Vertices revealed by a growth
+            step are initialised to the supplied rim composition.
 
         Returns
         -------
@@ -1259,16 +1198,35 @@ class MulticomponentDiffusion1D:
             Updated full composition array of shape (n_points, n_components).
         """
         new_radius = float(new_radius)
-        if new_radius <= self.r[0]:
+        if new_radius <= self._r_full[0]:
             raise ValueError(
-                f"new_radius must be greater than r[0] = {self.r[0]}, got {new_radius}."
+                f"new_radius must be greater than r[0] = {self._r_full[0]}, "
+                f"got {new_radius}."
             )
-        if new_radius > self.r[-1]:
+        if new_radius > self._r_full[-1]:
             raise ValueError(
-                f"new_radius {new_radius} exceeds the max grid radius {self.r[-1]}."
+                f"new_radius {new_radius} exceeds the max grid radius "
+                f"{self._r_full[-1]}."
             )
 
         rim = self._resolve_rim_composition(composition)
+
+        if grow_domain:
+            # The grain ends at the front: make the first front_idx+1 vertices
+            # the active domain, with the front vertex as the rim.  Locate the
+            # front by index -- np.linspace rarely lands exactly on new_radius.
+            front_idx = int(np.argmin(np.abs(self._r_full - new_radius)))
+            self._set_extent(front_idx + 1)
+            self._X[front_idx:, :] = rim[None, :]
+            self._update_dependent_component()
+            if set_rim_bc:
+                self.set_bc(
+                    "right",
+                    "dirichlet",
+                    {name: float(rim[i]) for i, name in enumerate(self.components)},
+                )
+            return self._X.copy()
+
         mask = self.r > new_radius
         if not np.any(mask):
             # A boundary-reset growth at the maximum grid radius (e.g. the
@@ -1290,6 +1248,21 @@ class MulticomponentDiffusion1D:
                 name: float(rim[i]) for i, name in enumerate(self.components)
             }
             self.set_bc("right", "dirichlet", rim_dict)
+            if pin_front:
+                # Freeze the front and everything beyond it: the grid now
+                # behaves as though it ended at new_radius.  The vertex exactly
+                # at the front is the rim, so it takes the rim composition too
+                # -- otherwise the stored state would disagree with the pin
+                # until the next solve.  Locate the front by index, not by
+                # comparing radii: ``np.linspace`` rarely lands exactly on
+                # ``new_radius``, so ``r >= new_radius`` silently drops the
+                # front vertex itself.
+                front_idx = int(np.argmin(np.abs(self.r - new_radius)))
+                pinned = np.zeros(self.n_points, dtype=bool)
+                pinned[front_idx:] = True
+                self._X[pinned, :] = rim[None, :]
+                self._update_dependent_component()
+                self.set_internal_bcs(pinned, rim_dict)
 
         return self._X.copy()
 
@@ -1504,7 +1477,29 @@ class MulticomponentDiffusion1D:
         left_bc = self._bcs["left"]
         left_vals = self._resolve_bc_values(left_bc)
 
-        if left_bc.bc_type == "dirichlet":
+        if self.centre == "mirror":
+            # CZGM MATLAB treatment of the grain centre
+            # (``make_diffusion.m``: ``C(1,:) = C(2,:)`` then ``A(1,:) = C(1,:)``):
+            # vertex 0 is a *passive mirror* of vertex 1 -- it is held at vertex
+            # 1's pre-update value and never evolves.  Implemented as an
+            # identity row with the right-hand side set to vertex 1's current
+            # value, which is exactly that.  The flux between vertices 0 and 1
+            # then evaluates as ``D * (X1_prev - X1_new)``, i.e. the one-sided
+            # Laplacian MATLAB's stencil produces.
+            #
+            # This is NOT a zero-gradient symmetry plane.  A true zero-flux
+            # centre lets vertex 0 diffuse; this one does not.  Measured on the
+            # CZGM planar benchmark (``combined_C_final_cart.csv``) the centre
+            # relaxes to +0.0375 with ``mirror`` (matching the reference to
+            # ~1e-4) but only +0.0314 with ``zero_flux``.  ``zero_flux`` is the
+            # physically defensible condition for a symmetry plane; ``mirror``
+            # is what the benchmark was produced with.
+            for i in range(P):
+                row = 0 * P + i
+                A[row, :] = 0.0
+                A[row, row] = 1.0
+                b[row] = float(X_eval[1, self.independent_indices[i]])
+        elif left_bc.bc_type == "dirichlet":
             for i in range(P):
                 row = 0 * P + i
                 A[row, :] = 0.0

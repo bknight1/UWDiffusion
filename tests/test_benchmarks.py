@@ -6,7 +6,7 @@ Reproduces the two 2D Underworld3 reference benchmarks in 1D:
 2. CZGM garnet growth + diffusion -- Tutorials/Diffusion/CZGM_garnet_model_annulus.ipynb
 
 and unit-tests the supporting API (time-dependent diffusivities, growth
-steps, the Darken/CZGM reduced-matrix helper, run_to_time).
+steps, the Lasaga mean-field reduced-matrix helper, run_to_time).
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 from scipy import interpolate
 
-from UWDiffusion import MulticomponentDiffusion1D, darken_reduced_diffusivity
+from UWDiffusion import MulticomponentDiffusion1D, lasaga_reduced_diffusivity
 from UWDiffusion.fd_1d import reduce_diffusion_matrix
 
 CZGM_DATA = (
@@ -139,7 +139,7 @@ def _make_czgm_diffusivity(ptt: np.ndarray) -> callable:
     """Build a time- and composition-dependent CZGM diffusivity callable.
 
     Uses the Arrhenius tracer diffusivities (Chakraborty & Ganguly 1992)
-    interpolated along the PTt path, and the Darken-reduced 3x3 matrix with
+    interpolated along the PTt path, and the Lasaga-reduced 3x3 matrix with
     Ca as the dependent component:
         D_ij = D_i*delta_ij - (D_i*X_i/sum_k D_k*X_k)*(D_j - D_Ca)
 
@@ -173,7 +173,7 @@ def _make_czgm_diffusivity(ptt: np.ndarray) -> callable:
     def d_czgm(t_sec: float, X: dict[str, float]) -> np.ndarray:
         Di = d_tracer(t_sec / MYR_SEC)
         Xv = np.array([X["Fe"], X["Mg"], X["Mn"], X["Ca"]])
-        return darken_reduced_diffusivity(Di, Xv, dependent_component=3)
+        return lasaga_reduced_diffusivity(Di, Xv, dependent_component=3)
 
     return d_czgm
 
@@ -306,7 +306,7 @@ def test_czgm_arrhenius_uses_stored_kelvin(czgm_data: dict) -> None:
 
     X = {"Fe": 0.4, "Mg": 0.05, "Mn": 0.2, "Ca": 0.35}
     d_model = _make_czgm_diffusivity(ptt)(ptt[0, 2] * MYR_SEC, X)
-    d_expected = darken_reduced_diffusivity(
+    d_expected = lasaga_reduced_diffusivity(
         tracer,
         np.array([X["Fe"], X["Mg"], X["Mn"], X["Ca"]]),
         dependent_component=3,
@@ -362,15 +362,15 @@ def test_radius_named_diffusivity_uses_radius() -> None:
     assert 0.0 < seen["r"] < r[-1]
 
 
-def test_darken_reduced_diffusivity_matches_full_matrix_reduction() -> None:
-    """Cross-check darken_reduced_diffusivity against reduce_diffusion_matrix."""
+def test_lasaga_reduced_diffusivity_matches_full_matrix_reduction() -> None:
+    """Cross-check lasaga_reduced_diffusivity against reduce_diffusion_matrix."""
     D_tracers = np.array([1.0e-4, 3.0e-4, 5.0e-5, 2.0e-5])
     X = np.array([0.50, 0.20, 0.20, 0.10])
 
-    D_red = darken_reduced_diffusivity(D_tracers, X, dependent_component=3)
+    D_red = lasaga_reduced_diffusivity(D_tracers, X, dependent_component=3)
     assert D_red.shape == (3, 3)
 
-    # Full Darken matrix with the same formula, reduced via the generic path
+    # Full mean-field matrix with the same formula, reduced via the generic path
     S = float(D_tracers @ X)
     F = np.zeros((4, 4))
     for i in range(4):
@@ -426,3 +426,139 @@ def test_apply_growth_and_run_to_time() -> None:
         model.apply_growth(0.0, {"A": 0.6, "B": 0.3})
     with pytest.raises(ValueError, match="target_time"):
         model.run_to_time(4.0, dt=1.0)
+
+
+def test_apply_growth_pin_front_freezes_the_growth_domain() -> None:
+    """``pin_front=True`` makes the grain end at the growth front.
+
+    The CZGM MATLAB driver runs its diffusion step on the sub-grid ``Rr(1:i)``,
+    so nodes beyond the growth front do not exist and no flux crosses it.  On a
+    fixed grid that is emulated by freezing the front and everything beyond it
+    at the rim composition (``set_internal_bcs``).  Simply stamping those nodes
+    (``pin_front=False``) leaves a buffer of rim material that the interior
+    diffuses into and out of, which under-predicts diffusional relaxation --
+    measured on the CZGM planar benchmark as a 1.39x shortfall at the core.
+
+    Both variants must run; the pinned variant must keep the front exactly at
+    the rim composition while the unpinned one lets diffusion cross it.
+    """
+    r = np.linspace(0.0, 1.0e-5, 51)          # 0 .. 10 um
+    # Weak enough that diffusion moves a few cells over the run below, rather
+    # than homogenising the whole domain onto the rim value (which would make
+    # the two growth modes indistinguishable).
+    diffusivity = np.diag([1.0e-24, 1.0e-24])  # m^2/s, uniform
+
+    def build():
+        model = MulticomponentDiffusion1D(
+            grid=r,
+            diffusivity=diffusivity,
+            geometry="planar",
+            components=["A", "B", "C"],
+            dependent_component="C",
+            bcs={"left": ("neumann", 0.0), "right": ("neumann", 0.0)},
+        )
+        # Steep gradient so the effect of the front is unambiguous.
+        model.set_initial_composition({"A": 0.2, "B": 0.1})
+        return model
+
+    front = 5.0e-6
+    rim = {"A": 0.8, "B": 0.1}
+    rim_vec = np.array([0.8, 0.1, 0.1])
+
+    pinned = build()
+    pinned.apply_growth(front, rim, set_rim_bc=True, pin_front=True)
+    # Everything at or beyond the front is frozen at the rim composition.
+    # Locate the front by index: linspace rarely lands exactly on `front`.
+    front_idx = int(np.argmin(np.abs(pinned.r - front)))
+    frozen = np.zeros(len(pinned.r), dtype=bool)
+    frozen[front_idx:] = True
+    assert np.allclose(pinned.get_composition()[frozen], rim_vec, atol=1e-12)
+    pinned.run_to_time(1.0e12, 2.0e10)         # a few cells of diffusion
+    assert np.allclose(pinned.get_composition()[frozen], rim_vec, atol=1e-12), (
+        "pin_front=True must not let diffusion move the growth front"
+    )
+
+    stamped = build()
+    stamped.apply_growth(front, rim, set_rim_bc=True, pin_front=False)
+    # Without pin_front the front vertex keeps its old value -- only vertices
+    # strictly beyond the front are stamped with the rim composition.
+    beyond = np.zeros(len(stamped.r), dtype=bool)
+    beyond[front_idx + 1:] = True
+    assert np.allclose(stamped.get_composition()[beyond], rim_vec, atol=1e-12)
+    stamped.run_to_time(1.0e12, 2.0e10)
+    assert not np.allclose(stamped.get_composition()[frozen], rim_vec, atol=1e-12), (
+        "pin_front=False should let diffusion cross into the stamped region"
+    )
+
+    # The interior must also differ: pinning the front removes a sink/source
+    # that the unstamped region would otherwise provide.
+    interior = pinned.r < front
+    assert not np.allclose(
+        pinned.get_composition()[interior], stamped.get_composition()[interior]
+    ), "the two growth modes should leave different interior profiles"
+
+    # pin_front is opt-out-able and reversible.
+    again = build()
+    again.apply_growth(front, rim, set_rim_bc=True, pin_front=True)
+    assert again._internal_bcs
+    again.clear_internal_bcs()
+    assert not again._internal_bcs
+
+
+def test_centre_mirror_matches_czgm_treatment() -> None:
+    """``centre="mirror"`` reproduces the CZGM grain-centre condition.
+
+    ``make_diffusion.m`` does ``C(1,:) = C(2,:)`` then ``A(1,:) = C(1,:)``:
+    vertex 0 is a *passive mirror* of vertex 1, held at vertex 1's pre-update
+    value, and never evolves.  That is not a zero-gradient symmetry plane --
+    a true zero-flux centre lets vertex 0 diffuse.
+
+    On the CZGM planar benchmark the difference is the whole remaining gap:
+    the core relaxes to +0.0375 with ``mirror`` (matching
+    ``combined_C_final_cart.csv`` to ~1e-4) but only +0.0314 with
+    ``zero_flux``.  Both treatments must run and must differ.
+    """
+    r = np.linspace(0.0, 1.0e-5, 51)
+    diffusivity = np.diag([1.0e-24, 1.0e-24])
+
+    def build(centre):
+        model = MulticomponentDiffusion1D(
+            grid=r,
+            diffusivity=diffusivity,
+            geometry="planar",
+            components=["A", "B", "C"],
+            dependent_component="C",
+            bcs={"left": ("neumann", 0.0), "right": ("neumann", 0.0)},
+            centre=centre,
+        )
+        # A ramp so the centre has somewhere to diffuse from.
+        ramp = 0.2 + 0.6 * (r / r[-1])
+        model.set_initial_composition(
+            {"A": ramp, "B": np.full_like(ramp, 0.1)}
+        )
+        return model
+
+    mirror = build("mirror")
+    zero_flux = build("zero_flux")
+    a0_mirror = mirror.get_composition("A")[0]
+    a0_zero = zero_flux.get_composition("A")[0]
+    assert a0_mirror == pytest.approx(a0_zero)
+
+    mirror.run_to_time(1.0e12, 2.0e10)
+    zero_flux.run_to_time(1.0e12, 2.0e10)
+
+    # The mirror must not move: it only ever copies vertex 1.
+    assert mirror.get_composition("A")[0] != pytest.approx(a0_mirror), (
+        "mirror centre should have been updated from vertex 1"
+    )
+    # The two treatments must leave different core values.
+    assert mirror.get_composition("A")[0] != pytest.approx(
+        zero_flux.get_composition("A")[0]
+    ), "mirror and zero_flux centres should differ"
+
+    # Unknown option is rejected rather than silently ignored.
+    with pytest.raises(ValueError, match="centre"):
+        MulticomponentDiffusion1D(
+            grid=r, diffusivity=diffusivity, geometry="planar",
+            components=["A", "B", "C"], dependent_component="C", centre="nope",
+        )

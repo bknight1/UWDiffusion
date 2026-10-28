@@ -12,6 +12,7 @@ setup(
     package_dir={"": "src"},
     install_requires=[
         "underworld3",
+        "pint",
     ],
     classifiers=[
         "Programming Language :: Python :: 3.11",

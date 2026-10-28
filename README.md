@@ -20,6 +20,8 @@ pip install .
 ## Usage
 The library can be used to model and solve diffusion problems. Tutorials are provided in the `Tutorials/` directory to help you get started.
 
+For tested model setup patterns and validation results, see the guides for [scalar diffusion](docs/scalar_diffusion.md) and [coupled multicomponent diffusion](docs/multicomponent_diffusion.md).
+
 
 ## Licence
 All UWDiffusion source code is released under the LGPL-3 open source licence. This covers all files in UWDiffusion constituting the UWDiffusion Python module. Notebooks, stand-alone documentation and Python scripts which show how the code is used and run are licensed under the Creative Commons Attribution 4.0 International Licence. For more details, see the [LICENCE.md](LICENCE.md) file.
@@ -36,5 +38,3 @@ Feel free to run the examples on binder!
 ### UW Diffusion
 - Knight, B.S., Clark, C., 2025. Modelling diffusion, decay and ingrowth of U–Pb isotopes in zircon. EGUsphere 1–24. https://doi.org/10.5194/egusphere-2025-2278
 - Clark, C., Brown, M., Knight, B., Johnson, T.E., Mitchell, R.J., Gupta, S., 2024. Ultraslow cooling of an ultrahot orogen. Geology. https://doi.org/10.1130/G52442.1
-
-

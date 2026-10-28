@@ -1,7 +1,37 @@
-from .Models import *
-from .meshing import *
-from .utilities import *
+try:
+    from .Models import *
+    from .meshing import *
+    from .utilities import *
+except (ImportError, RuntimeError):
+    # Underworld3 or MPI may not be available in all execution environments.
+    pass
 
-# from .solvers import SNES_Diffusion
+from .diffusion_matrix import (
+    lasaga_matrix,
+    lasaga_reduced_diffusivity,
+    reduce_diffusion_matrix,
+)
+from .fd_1d import (
+    BoundaryCondition,
+    MulticomponentDiffusion1D,
+    SimulationResult,
+)
+from .tracer_diffusivities import (
+    BY_SOURCE,
+    CG92,
+    TracerDiffusivity,
+    cg92_ca,
+)
 
-# __all__ = ["DiffusionModel", "DiffusionDecayIngrowthModel", "constant_diffusivity", "T_dep_diffusivity", "PT_dep_diffusivity", "custom_diffusivity"]
+__all__ = [
+    "BoundaryCondition",
+    "BY_SOURCE",
+    "CG92",
+    "MulticomponentDiffusion1D",
+    "SimulationResult",
+    "TracerDiffusivity",
+    "cg92_ca",
+    "lasaga_matrix",
+    "lasaga_reduced_diffusivity",
+    "reduce_diffusion_matrix",
+]

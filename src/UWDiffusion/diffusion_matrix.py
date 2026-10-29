@@ -40,6 +40,25 @@ This is *not* the classical Darken binary coefficient
 coefficient, but Darken partitions the flux-conserving drift by mole fraction
 ``X_i`` where Lasaga's mean field partitions it by ``D_i X_i / sum_k X_k D_k``;
 for a binary with ``D = [1, 2]``, ``X = [0.5, 0.5]`` they give 1.5 and 1.333.
+
+Structure of the reduced matrix
+-------------------------------
+The reduction is **not symmetric**, and its symmetric part is **indefinite**.
+The rank-1 correction is an outer product ``u v^T`` with
+``u_i = D_i X_i / sum_k D_k X_k`` and ``v_j = D_j - D_dep``, so ``M_ij`` and
+``M_ji`` scale with *different* ``(D_j - D_dep)`` factors and the asymmetry
+grows without bound as one tracer separates from the dependent one.  With the
+CG92 convention (``D_Ca = D_Mn / 20``) and Mn present at a few percent,
+``M[1, 2]`` is roughly two orders of magnitude from ``M[2, 1]``, and
+``sym(M)`` has a negative eigenvalue at every composition.
+
+This is not a conditioning problem.  ``M`` is positive-stable (eigenvalues
+real and positive) and ``cond(M)`` is only ~20-40.  It matters for the
+*linear solver*: preconditioners that assume an SPD operator -- GAMG and
+coarse-grid correction generally -- are structurally invalid here, and will
+make a Newton solve diverge with ``SNES_DIVERGED_LINE_SEARCH`` where a direct
+solve converges.  Use a direct solve, or a non-symmetric-aware preconditioner
+such as ``bjacobi``/``asm`` with ``ilu`` or ``lu`` subdomains.
 """
 
 from __future__ import annotations

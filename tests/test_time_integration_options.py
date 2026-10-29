@@ -27,6 +27,7 @@ try:
         DiffusionDecayIngrowthModel,
         DiffusionModel,
         MulticomponentDiffusionModel,
+        lasaga_matrix_from_components,
     )
 except Exception as exc:  # pragma: no cover - environment dependent
     pytest.skip(
@@ -385,3 +386,39 @@ def test_variable_dt_final_step_is_truncated():
     model.run_simulation(duration=0.07, min_dt=0.02, max_dt=0.02)
     assert model.current_time == pytest.approx(0.07, abs=1e-12), model.current_time
     assert model.step == 4, model.step
+
+
+# ==============================================================================
+# 6. Unbound diffusivity symbols must not silently yield one giant step
+# ==============================================================================
+
+
+def test_unresolved_diffusivity_symbols_raise():
+    """run_simulation must not silently run the whole model in a single step.
+
+    The timestep heuristic evaluates the diffusion matrix at the top of the
+    step loop, before any pre-solve hook runs.  With unsubstituted parameter
+    symbols it used to return 0.0, which makes max_time_step infinite, so the
+    run advances to the target in ONE step while reporting success -- silently
+    discarding every timestep the heuristic was supposed to choose.
+    """
+    mesh = _mesh(6)
+    model = MulticomponentDiffusionModel(
+        ["Fe", "Mg", "Ca"], mesh, degree=1, order=1,
+        diffusion_matrix=lasaga_matrix_from_components(["Fe", "Mg", "Ca"]),
+    )
+    # Deliberately NOT calling set_diffusion_values.
+    with pytest.raises(RuntimeError, match="unresolved symbols"):
+        model.run_simulation(duration=0.01)
+
+
+def test_bound_diffusivity_symbols_step_normally():
+    """The same model runs once the parameter symbols are bound."""
+    mesh = _mesh(6)
+    model = MulticomponentDiffusionModel(
+        ["Fe", "Mg", "Ca"], mesh, degree=1, order=1,
+        diffusion_matrix=lasaga_matrix_from_components(["Fe", "Mg", "Ca"]),
+    )
+    model.set_diffusion_values({"Fe": 1.0, "Mg": 0.8, "Ca": 0.5})
+    model.run_simulation(duration=0.01, min_dt=0.005, max_dt=0.005)
+    assert model.step == 2, model.step

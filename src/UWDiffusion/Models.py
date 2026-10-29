@@ -781,8 +781,8 @@ class MulticomponentDiffusionModel:
                 return float(np.max(np.abs(np.array(mat.tolist(), dtype=float))))
 
         # Composition-dependent: sample the matrix over the mesh nodes.
+        coords = self._u.coords
         try:
-            coords = self._u.coords
             samples = [np.asarray(uw.function.evaluate(expr, coords)).ravel()
                        for expr in mat]
             per_node = np.array(samples).reshape(self.n_independent, self.n_independent, -1)
@@ -790,9 +790,29 @@ class MulticomponentDiffusionModel:
                 np.max(np.abs(np.linalg.eigvals(per_node[:, :, k])))
                 for k in range(per_node.shape[-1])
             ])
-            return float(np.max(radius)) if radius.size else 0.0
-        except Exception:
-            return 0.0
+        except Exception as exc:
+            # Returning 0.0 here is NOT a safe fallback.  It makes
+            # max_time_step infinite, so run_simulation advances the whole run
+            # in ONE step and reports success -- silently discarding every
+            # timestep the accuracy heuristic was supposed to choose.  The
+            # usual cause is unsubstituted parameter symbols, i.e.
+            # set_diffusion_values() has not been called before run_simulation()
+            # (the pre-solve hooks run too late: this is evaluated at the top of
+            # the step loop).  That is a setup error and must surface.
+            unresolved = sorted(
+                s.name for s in mat.free_symbols if not s.name.startswith("N.")
+            )
+            detail = (
+                f"the matrix still carries unresolved symbols {unresolved}; "
+                "call set_diffusion_values() (or build the matrix from numeric "
+                "values) BEFORE run_simulation()"
+                if unresolved else "the matrix could not be evaluated on the mesh"
+            )
+            raise RuntimeError(
+                "cannot estimate a timestep: " + detail + ".  Original error: "
+                + repr(exc)
+            ) from exc
+        return float(np.max(radius)) if radius.size else 0.0
 
     def _effective_order(self):
         """BDF/AM order actually used at this step: ramps up from 1."""
@@ -841,10 +861,16 @@ class MulticomponentDiffusionModel:
 
     def run_simulation(self, duration, max_dt=None, min_dt=None, time_step_factor=0.1,
                        picard=None):
-        """Advance the model for ``duration``.
+        """Advance the model until ``current_time`` reaches ``duration``.
 
         Parameters:
-        - duration: total simulation time with units (e.g. 1e5 * uw.year)
+        - duration: ABSOLUTE target simulation time with units (e.g.
+            ``1e5 * uw.year``) -- NOT an increment.  Stepping stops when
+            ``current_time`` reaches this value, so a staged run passes the end
+            time of each stage: ``duration=t1`` advances from wherever the
+            previous call finished up to ``t1``.  The name is a legacy
+            misnomer; read it as "advance to this time".  Passing an increment
+            here silently overshoots whenever ``current_time != 0``.
         - max_dt, min_dt: optional timestep clamps
         - time_step_factor: scales the *suggested* step
             ``time_step_factor * h^2 / kappa_max``.  Accuracy heuristic only --
@@ -1354,7 +1380,7 @@ class DiffusionDecayIngrowthModel(MulticomponentDiffusionModel):
     def run_simulation(self, duration, min_dt=None, max_dt=None,
                        diffusion_time_step_factor=0.5, picard=None):
         """
-        Run the decay simulation for the specified duration.
+        Run the decay simulation until ``current_time`` reaches ``duration``.
 
         Notes:
         - The diffusion-decay-ingrowth coupling is highly timestep sensitive.
@@ -1363,7 +1389,11 @@ class DiffusionDecayIngrowthModel(MulticomponentDiffusionModel):
           meaningful min_dt.
 
         Parameters:
-        - duration: Total simulation time with units (e.g. 1e5*u.second)
+        - duration: ABSOLUTE target simulation time with units (e.g.
+            ``1e5*u.second``) -- NOT an increment.  Stepping stops when
+            ``current_time`` reaches this value, so a staged run passes the end
+            time of each stage.  The name is a legacy misnomer; read it as
+            "advance to this time".
         - min_dt: Minimum time step (optional)
         - max_dt: Maximum time step (optional)
         - diffusion_time_step_factor: scales the *suggested* diffusive step

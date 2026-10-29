@@ -574,9 +574,113 @@ mass is a bug, not a discretisation artefact.
 
 ---
 
+## Choosing solver tolerance and preconditioner
+
+Measured on a genuinely **nonlinear**, time-dependent problem
+(`examples/solver_tolerance_sweep.py`): a four-component Lasaga matrix whose
+entries depend on the composition unknowns through `xi_1..xi_4`, a synthetic
+PTt path re-binding the diffusivities every step, and a rim Dirichlet condition
+rebuilt every step. Fixed discretisation, 240 steps, self-consistency against
+the tightest run.
+
+**Why the operator has to be nonlinear for this question to mean anything.**
+The constant-coefficient variant of the same script reports exactly **1 Newton
+iteration at every tolerance from 1e-4 to 1e-10**, with bit-identical answers:
+a linear operator converges in one step whatever `snes_atol` is, so there is no
+knee to find. All the eigenmode verification in this repo is that linear case.
+Solver tolerance is a *nonlinear* question and does not transfer from it.
+
+### The knee is `1e-5`, not `1e-8`
+
+| `snes_atol` | its/solve | Δ vs converged |
+|---|---|---|
+| 1e-03 | 2.00 | 6.96e-04 |
+| 1e-04 | 2.00 | 6.96e-04 |
+| **1e-05** | **3.00** | **2.67e-08** |
+| 1e-06 | 3.00 | 2.67e-08 |
+| 1e-07 | 3.00 | 2.67e-08 |
+| 1e-08 | 3.65 | 0 |
+
+There is a hard cliff between `1e-04` and `1e-05`, and **nothing below `1e-05`
+buys anything**: `1e-08` costs 35% more Newton iterations and 4% more
+wall-clock for a change of 2.7e-08. Use `snes_rtol = snes_atol = 1e-5`.
+
+### Ordering rule
+
+The linear solve must be *tighter* than the nonlinear one:
+
+```
+ksp_rtol  <   snes_rtol
+ksp_atol  <<  ksp_rtol * ||b||     (a floor, not a criterion)
+snes_atol <=  snes_rtol * ||F0||   (a floor, not a criterion)
+```
+
+`atol` and `rtol` are not ordered against *each other*: `rtol` is dimensionless
+(a required fractional reduction) and `atol` is in residual units (an absolute
+floor). Numerically `atol` normally sits far below `rtol` so that `rtol` binds.
+The ordering that matters is across levels.
+
+Inverting it (`ksp_rtol` looser than `snes_atol`) caps how far Newton can get,
+because the linear error floor exceeds the requested nonlinear tolerance and
+Newton grinds against it.  Worth getting right as good practice.
+
+It was an early suspect for a `SNES_DIVERGED_LINE_SEARCH` in a production
+garnet run and **is not the cause** — the sweep reproduced the inverted
+hierarchy without failure, and the divergence turned out to be GAMG against an
+indefinite matrix (below).
+
+### GAMG is structurally invalid for this matrix
+
+**`pc_type=gamg` DIVERGES on the production garnet operator while a direct
+solve converges.** This is not a tuning problem, it is a mismatch of assumptions:
+
+* The Lasaga reduced matrix is **strongly non-symmetric** and its **symmetric
+  part is indefinite everywhere** — a negative eigenvalue across the whole
+  composition range.  With a fast-Mn / slow-Ca tracer set the asymmetry is
+  large (`M[1,2]` two orders of magnitude from `M[2,1]`), because the rank-1
+  term carries `(D_j - D_dep)` weighted by a tiny `X_Mn`.
+* GAMG constructs its coarse grid assuming an SPD-like operator.  On this
+  matrix the interpolation is structurally wrong, so the preconditioner is
+  invalid rather than merely poor: the linear solve fails, Newton receives a
+  garbage direction, and `snes_type=newtonls` reports
+  **`SNES_DIVERGED_LINE_SEARCH` (`reason=-3`) after a couple of iterations**.
+
+Note this is *not* a conditioning problem — `cond(M)` is only ~20-40.  The
+matrix is well-conditioned; GAMG is simply the wrong tool for its structure.
+
+**Use `bjacobi` with `sub_pc_type=lu`.**  It converges where GAMG diverges.
+On a single rank `bjacobi` is one block, so this is exactly `pc_type=lu` —
+but unlike bare `pc_type=lu` it still works when the run is distributed.
+Bare `pc_type=lu` also has two other costs: PETSc's default LU backend is
+weak (use `mat_solver_type=mumps` or `umfpack` if you want a real one), and
+it refactorises every timestep when diffusivities are rebound each step.
+
+`bjacobi`/`asm` with `ilu` is the cheaper fallback and is robust for
+non-symmetric operators, but it is approximate — prefer `lu` subdomains while
+they fit in memory.
+
+### Preconditioner speed is problem-size dependent
+
+On the small study problem (`examples/solver_tolerance_sweep.py`, ~25 s per
+run) the four preconditioners agreed to machine precision and differed by
+**1.03x** — that is run-to-run noise, not a ranking.  The study has no
+resolution to rank preconditioners and should not be quoted as evidence that
+"bjacobi is fastest".  On the production-size model the ranking is set by
+robustness (above), not by that table.
+
+### Set diffusivities before `run_simulation`
+
+The timestep heuristic evaluates the matrix at the *top* of the step loop,
+before any pre-solve hook runs. If the parameter symbols are still
+unsubstituted it now raises — it used to return `0.0`, making `max_time_step`
+infinite so the entire run took one step and reported success. Bind them up
+front; a pre-solve hook is too late for the *first* estimate.
+
+---
+
 ## Testing
 
-`tests/` is the source of truth for API usage. 81 tests, ~60 s.
+`tests/` is the source of truth for API usage. 94 tests, ~60 s.
 
 | file | covers |
 |---|---|
@@ -587,7 +691,7 @@ mass is a bug, not a discretisation artefact.
 | `test_benchmarks.py` | CZGM benchmarks against reference CSVs; growth/centre options |
 | `test_tracer_diffusivities.py` | unit convention, transcription, primary-source errors |
 | `test_decay_ingrowth.py` | decay/ingrowth source terms |
-| `test_time_integration_options.py` | BDF order, variable dt |
+| `test_time_integration_options.py` | BDF order, variable dt, the timestep heuristic |
 
 Tolerances in these tests are calibrated to *measured* values with documented
 headroom. If one fails, the regression is usually real — read the docstring

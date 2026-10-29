@@ -53,10 +53,10 @@ Study design
   convergence diagnostics per 2D step (post-solve hooks), and a 1D linear
   system residual probe (assemble + one additional step at the finest grid).
 
-Run in the documented UW3 environment from the repository root:
+Run from the repository root in an environment with the UW3/PETSc/MPI stack
+available (see AGENTS.md):
 
-    source /Users/benknight/software/venv/uw3-dev/bin/activate && \
-        python examples/convergence_1d_2d_cylindrical_multicomponent.py
+    python examples/convergence_1d_2d_cylindrical_multicomponent.py
 
 Machine-readable results are written to
 ``examples/output/convergence_study_summary.json`` (gitignored).
@@ -779,7 +779,6 @@ summary = {
     "meta": {
         "script": str(Path(__file__).name),
         "command": (
-            "source /Users/benknight/software/venv/uw3-dev/bin/activate && "
             "python examples/convergence_1d_2d_cylindrical_multicomponent.py"
         ),
         "components": COMPONENTS,

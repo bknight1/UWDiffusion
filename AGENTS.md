@@ -43,7 +43,7 @@ The UW3/PETSc/MPI stack lives in a dedicated venv. **Activate it first** — a
 bare `import underworld3` from a plain shell fails with "cannot load MPI library".
 
 ```bash
-source /Users/benknight/software/venv/uw3-dev/bin/activate
+source /path/to/venv/uw3-dev/bin/activate
 ```
 
 ```bash
@@ -715,5 +715,7 @@ Test data lives in `tests/data/` and `Tutorials/Diffusion/CZGM_data/`.
   field; a convention should read as a convention.
 - **Notebooks are not the test suite.** `Tutorials/` is teaching material and
   gets re-executed by hand; `tests/` is what guards behaviour.
-- Underworld3 source lives at `/Users/benknight/Documents/Research/GitHub/underworld3`.
+- Underworld3 source lives in a sibling checkout of
+  [underworldcode/underworld3](https://github.com/underworldcode/underworld3)
+  (next to this repository).
   If you change it, rebuild with `./uw build` — never `pip install -e .` there.

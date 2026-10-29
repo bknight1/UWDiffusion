@@ -24,10 +24,10 @@ P3  At fixed `order=1`, `degree=2 -> 3` buys almost nothing (both buried under
 P4  Measured error is bracketed by (time error + spatial floor), within a
     factor of a few.
 
-Run in the documented UW3 environment from the repository root:
+Run from the repository root in an environment with the UW3/PETSc/MPI stack
+available (see AGENTS.md):
 
-    source /Users/benknight/software/venv/uw3-dev/bin/activate && \
-        python examples/degree_order_sweep.py
+    python examples/degree_order_sweep.py
 
 Machine-readable results go to ``examples/output/degree_order_sweep.json``
 (gitignored).

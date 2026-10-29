@@ -26,14 +26,12 @@ Run from the repository root in the UW3 environment:
 
 # %%
 import json
-import sys
 import time
 from pathlib import Path
 
 import numpy as np
 from scipy.interpolate import interp1d
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from UWDiffusion.fd_1d import MulticomponentDiffusion1D, lasaga_reduced_diffusivity
 from UWDiffusion.tracer_diffusivities import CG92
 

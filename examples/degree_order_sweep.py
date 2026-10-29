@@ -50,7 +50,6 @@ from scipy.special import j0, j1, y0, y1
 
 import underworld3 as uw
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from UWDiffusion import MulticomponentDiffusionModel
 
 # %%

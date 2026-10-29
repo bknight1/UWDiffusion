@@ -29,18 +29,12 @@ Run in the documented UW3 environment from the repository root:
 # anisotropy), not a change in physics or time integration.
 
 # %%
-import sys
-from pathlib import Path
-
 import numpy as np
 from scipy.optimize import brentq
 from scipy.special import j0, j1, y0, y1
 
 import underworld3 as uw
 
-# Allow direct execution from a source checkout without requiring an editable
-# UWDiffusion install in the activated Underworld environment.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from UWDiffusion import DiffusionModel, MulticomponentDiffusion1D
 
 # %%

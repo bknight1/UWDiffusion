@@ -58,7 +58,6 @@ import numpy as np
 
 import underworld3 as uw
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from UWDiffusion import MulticomponentDiffusionModel, lasaga_matrix_from_components
 
 # %%

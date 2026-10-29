@@ -39,7 +39,6 @@ Run in the documented UW3 environment from the repository root:
 """
 
 # %%
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -47,7 +46,6 @@ import sympy as sp
 
 import underworld3 as uw
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from UWDiffusion import (
     MulticomponentDiffusion1D,
     MulticomponentDiffusionModel,

@@ -175,11 +175,11 @@ def test_pint_provides_the_gas_constant_and_enforces_the_pressure_identity() -> 
     from UWDiffusion import tracer_diffusivities as td
 
     # Gas constant is pint's, not a transcribed literal.
-    assert td.MOLAR_GAS_CONSTANT.units == td._UREG.Unit("molar_gas_constant")
+    assert td.MOLAR_GAS_CONSTANT.units == td.UREG.Unit("molar_gas_constant")
     assert td.R_KJ_PER_MOL_K == pytest.approx(8.314462618e-3)
 
     # The identity the whole convention rests on.
-    one = td._UREG.Quantity(1.0, "GPa") * td._UREG.Quantity(1.0, "cm**3/mol")
+    one = td.UREG.Quantity(1.0, "GPa") * td.UREG.Quantity(1.0, "cm**3/mol")
     assert one.to("kJ/mol").magnitude == pytest.approx(1.0)
 
     # And it is genuinely used: 1 GPa shifts the exponent by exactly dV/(R T),

@@ -24,8 +24,8 @@ src/UWDiffusion/
   diffusion_matrix.py       Lasaga mean-field matrix, numeric + symbolic. ONE home for the formula.
   tracer_diffusivities.py   Published Arrhenius parameters (CG92, Loomis 1985).
   meshing.py                Gmsh mesh generation (boxes, garnet annuli with shell labels).
-  utilities.py              Plotting and sampling helpers.
-tests/                      8 files, 81 tests. This is the source of truth for API usage.
+  utilities.py              Plotting and sampling helpers; time-integrated diffusion length / BC-regime screen.
+tests/                      10 files, 103 tests. This is the source of truth for API usage.
 examples/                   Runnable jupytext scripts, incl. cross-solver benchmarks.
 Tutorials/                  Jupyter notebooks.
 docs/                       Prose documentation.
@@ -61,8 +61,10 @@ python examples/compare_1d_2d_garnet_growth.py
 before commit; without the module every notebook operation fails. If
 `git diff` errors with `No module named nbstripout`, `pip install nbstripout`.
 
-The package is **not** installed in the venv. Use `PYTHONPATH=src` (tests) or
-`sys.path.insert` (examples). Do not `pip install -e .` unless asked.
+The package **is** installed (editable) in the venv, so `import UWDiffusion`
+works from anywhere in that environment — examples must NOT use
+`sys.path.insert`. Tests keep `PYTHONPATH=src` so they pin to the working
+tree rather than a stale install. Do not run `pip install -e .` unless asked.
 
 **Scripts use jupytext `# %%` cell markers**, not `if __name__ == "__main__":`
 blocks. Follow that when adding examples.
@@ -148,6 +150,7 @@ drift differently. Do not test one against the other.
 |---|---|
 | `fd_1d` grid / time / diffusivity | metres / seconds / m²/s |
 | `tracer_diffusivities` | `log_D0` (D0 in m²/s), `dE` kJ/mol, `dV` cm³/mol, T in K, **P in GPa** |
+| `time_integrated_diffusion_length` | **t in Myr, T in degC, P in kbar**, radius in metres; converts to s/K/GPa via pint |
 
 `1 GPa · cm³/mol = 1 kJ/mol` exactly — that identity is why this convention is
 used and it removes the legacy `41.84` bar·cm³→cal factor. `pint` enforces it at
@@ -680,7 +683,7 @@ front; a pre-solve hook is too late for the *first* estimate.
 
 ## Testing
 
-`tests/` is the source of truth for API usage. 94 tests, ~60 s.
+`tests/` is the source of truth for API usage. 103 tests, ~65 s.
 
 | file | covers |
 |---|---|
@@ -690,6 +693,8 @@ front; a pre-solve hook is too late for the *first* estimate.
 | `test_1d_2d_coupling.py` | the two solvers against *each other*; mesh shell labels; history sync |
 | `test_benchmarks.py` | CZGM benchmarks against reference CSVs; growth/centre options |
 | `test_tracer_diffusivities.py` | unit convention, transcription, primary-source errors |
+| `test_diffusion_matrix.py` | `lasaga_matrix_from_components` and the `xi_k` naming contract |
+| `test_diffusion_length.py` | time-integrated diffusion length, unit conversion, BC regimes |
 | `test_decay_ingrowth.py` | decay/ingrowth source terms |
 | `test_time_integration_options.py` | BDF order, variable dt, the timestep heuristic |
 

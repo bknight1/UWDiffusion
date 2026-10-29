@@ -6,10 +6,127 @@ from matplotlib.patches import Circle
 from matplotlib.path import Path
 from scipy.spatial import ConvexHull
 
+from .tracer_diffusivities import CG92, UREG, cg92_ca
+
 
 lambda_235 = 9.8485e-10  # Decay constant for U-235 in yr^-1
 lambda_238 = 1.55125e-10  # Decay constant for U-238 in yr^-1
 current_ratio_U238_to_U235 = 137.818  # Present-day ratio of 238 to 235
+
+# Boundary-condition regime thresholds on eta = diffusion_length / radius.
+# These are screening heuristics, not sharp physical thresholds: an eta of 1
+# means the characteristic diffusion distance equals the domain radius, which
+# is necessary but not sufficient for full equilibration.
+BC_REGIME_ISOLATED_ETA = 0.3
+BC_REGIME_EQUILIBRATED_ETA = 1.0
+
+
+def time_integrated_diffusion_length(t_Myr, T_C, P_kbar, radius_m,
+                                     components=("Fe", "Mg", "Mn", "Ca")):
+    """Time-integrated tracer diffusion lengths and BC regimes over a P-T path.
+
+    For each component the characteristic diffusion length is the square root
+    of the diffusivity integrated over the actual thermal history::
+
+        x_i = sqrt( integral D_i(T(t), P(t)) dt )
+
+    discretised trapezoidally over the supplied path nodes.  Because D is
+    Arrhenius, the integral is dominated by the hottest segment of the path;
+    "peak temperature times total duration" is only an approximation to it.
+    The result is a *characteristic length*, not a diffusion profile, a
+    closure length, or evidence that equilibration occurred -- a length equal
+    to the radius is necessary but not sufficient.
+
+    Comparing x_i to the diffusion domain radius R gives ``eta = x_i / R``,
+    used here to choose the source of a rim Dirichlet boundary condition:
+
+    * ``eta < BC_REGIME_ISOLATED_ETA`` ("isolated"): the garnet interior does
+      not communicate with the rim on this path's timescale, so the element
+      behaves as fractionated -- build growth BCs from the evolving effective
+      bulk and retrograde BCs from the final effective bulk.
+    * ``eta > BC_REGIME_EQUILIBRATED_ETA`` ("equilibrated"): interior, rim and
+      matrix are connected for this element, so an original-bulk equilibrium
+      BC is valid and interior zoning in the element is erased on this path.
+    * in between ("transitional"): neither end-member applies -- run both BC
+      sources as bounding cases.
+
+    Input units are geological; conversion to the seconds/kelvin/GPa that
+    :meth:`UWDiffusion.tracer_diffusivities.TracerDiffusivity.at` expects
+    runs through the same pint registry as the Arrhenius evaluation:
+
+    ==================  ==========================================
+    quantity            units
+    ==================  ==========================================
+    ``t_Myr``           Myr (Julian year), monotonically increasing path nodes
+    ``T_C``             degrees Celsius
+    ``P_kbar``          kbar
+    ``radius_m``        metres
+    ==================  ==========================================
+
+    Parameters:
+    - t_Myr: 1D array of times in Myr, strictly increasing (path nodes)
+    - T_C: 1D array of temperatures in degC, same length as ``t_Myr``
+    - P_kbar: 1D array of pressures in kbar, same length as ``t_Myr``
+    - radius_m: diffusion domain radius in metres
+    - components: component names to evaluate (default Fe, Mg, Mn, Ca)
+
+    Returns:
+    - dict keyed by component name; each value has ``diffusion_length_m``,
+      ``eta`` and ``regime`` (one of ``"isolated"``, ``"transitional"``,
+      ``"equilibrated"``)
+
+    Diffusivities come from :mod:`UWDiffusion.tracer_diffusivities` (CG92
+    Chakraborty & Ganguly, 1992, with the package convention D_Ca = D_Mn/20).
+    CG92's calibration spans 1573-1753 K and 2.9-4.3 GPa; crustal conditions
+    are a strong extrapolation, so treat regimes as indicators, not precise
+    thresholds.
+    """
+    t = np.asarray(UREG.Quantity(np.asarray(t_Myr, dtype=float), "Myr").to("s").magnitude,
+                   dtype=float)
+    T = np.asarray(UREG.Quantity(np.asarray(T_C, dtype=float), "degC").to("K").magnitude,
+                   dtype=float)
+    P = np.asarray(UREG.Quantity(np.asarray(P_kbar, dtype=float), "kbar").to("GPa").magnitude,
+                   dtype=float)
+
+    if not (len(t) == len(T) == len(P)):
+        raise ValueError("t_Myr, T_C and P_kbar must have the same length")
+    if len(t) < 2:
+        raise ValueError("path needs at least two nodes")
+    if np.any(np.diff(t) <= 0):
+        raise ValueError("t_Myr must be strictly increasing")
+    if radius_m <= 0:
+        raise ValueError("radius_m must be positive")
+
+    dt = np.diff(t)
+
+    def _diffusivity(component):
+        if component == "Ca":
+            return cg92_ca
+        if component in CG92:
+            return CG92[component].at
+        raise ValueError(
+            f"unknown component {component!r}; supported: "
+            f"{sorted(CG92) + ['Ca']}"
+        )
+
+    result = {}
+    for component in components:
+        D = np.array([_diffusivity(component)(Tk, Pk) for Tk, Pk in zip(T, P)])
+        x2 = np.sum(0.5 * (D[:-1] + D[1:]) * dt)
+        x = float(np.sqrt(max(x2, 0.0)))
+        eta = x / radius_m
+        if eta < BC_REGIME_ISOLATED_ETA:
+            regime = "isolated"
+        elif eta > BC_REGIME_EQUILIBRATED_ETA:
+            regime = "equilibrated"
+        else:
+            regime = "transitional"
+        result[component] = {
+            "diffusion_length_m": x,
+            "eta": eta,
+            "regime": regime,
+        }
+    return result
 
 
 # Calculate Concordia points

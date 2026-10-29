@@ -55,13 +55,13 @@ from typing import Optional
 import numpy as np
 import pint
 
-_UREG = pint.UnitRegistry()
+UREG = pint.UnitRegistry()
 
 # Molar gas constant, taken from pint's registry rather than transcribed here.
 # CG92 quote R = 1.9872 cal/(mol K), i.e. 8.31443 J/(mol K) with 1 cal = 4.184 J;
 # pint's value differs by 3e-6, which is visible at the 1e-3 level in an
 # Arrhenius exponent of ~25.  Tests match the legacy convention explicitly.
-MOLAR_GAS_CONSTANT = _UREG.Quantity("molar_gas_constant")
+MOLAR_GAS_CONSTANT = UREG.Quantity("molar_gas_constant")
 R_KJ_PER_MOL_K = float(MOLAR_GAS_CONSTANT.to("kilojoule/(mol*kelvin)").magnitude)
 
 # Published parameters arrive in CG92/Loomis units; convert once here.
@@ -114,10 +114,10 @@ class TracerDiffusivity:
         being compatible, this raises instead of silently returning a
         plausible-looking number.
         """
-        dE = _UREG.Quantity(self.dE, "kJ/mol")
-        dV = _UREG.Quantity(self.dV, "cm**3/mol")
-        dP = _UREG.Quantity(float(P_GPa) - self.P_ref_GPa, "GPa")
-        T = _UREG.Quantity(float(T_K), "K")
+        dE = UREG.Quantity(self.dE, "kJ/mol")
+        dV = UREG.Quantity(self.dV, "cm**3/mol")
+        dP = UREG.Quantity(float(P_GPa) - self.P_ref_GPa, "GPa")
+        T = UREG.Quantity(float(T_K), "K")
 
         numerator = (dE + dP * dV).to("kJ/mol")  # enforces GPa*cm^3/mol == kJ/mol
         exponent = float((-(numerator / (MOLAR_GAS_CONSTANT * T))).to("dimensionless").magnitude)
